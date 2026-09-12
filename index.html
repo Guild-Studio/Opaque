@@ -1,0 +1,3147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>OPAQUE — Lua &amp; Luau code protection</title>
+<meta name="description" content="A real, in-browser Lua/Luau obfuscator: lexer, parser, AST transforms and code generator — not a mockup." />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
+<style>
+:root {
+  --bg: #07060d;
+  --bg-2: #0b0a15;
+  --panel: rgba(255,255,255,0.035);
+  --panel-solid: #120f1e;
+  --panel-raised: #17142a;
+  --border: rgba(255,255,255,0.09);
+  --border-strong: rgba(255,255,255,0.16);
+  --text: #f3f1fb;
+  --muted: #a9a3c4;
+  --muted-2: #6b6589;
+
+  --violet: #8b5cf6;
+  --violet-2: #a78bfa;
+  --cyan: #22d3ee;
+  --grad: linear-gradient(120deg, var(--violet), #c084fc 45%, var(--cyan));
+  --grad-text: linear-gradient(100deg, #d8b4fe, #a78bfa 35%, #67e8f9);
+
+  --gold: #f2c265;
+  --gold-dim: #6b551f;
+  --danger: #fb7185;
+  --danger-dim: #4a1f2b;
+
+  --r-sm: 10px;
+  --r-md: 16px;
+  --r-lg: 22px;
+  --r-xl: 28px;
+
+  --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: 'Sora', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+
+  --ease: cubic-bezier(.22,.9,.32,1.1);
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  position: relative;
+}
+
+body::before {
+  content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 999;
+  opacity: 0.05; mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+  background-size: 160px 160px;
+}
+
+body::after {
+  content: ""; position: fixed; left: 50%; top: 0; width: 1200px; height: 1200px;
+  transform: translateX(-50%); pointer-events: none; z-index: 0;
+  background: radial-gradient(circle, rgba(139,92,246,0.10), transparent 60%);
+  filter: blur(10px);
+}
+
+a { color: var(--cyan); text-decoration: none; }
+a:hover { text-decoration: underline; }
+::selection { background: rgba(139,92,246,0.35); color: #fff; }
+
+button, input, select { font-family: inherit; }
+
+button:focus-visible, select:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible {
+  outline: 2px solid var(--cyan); outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+}
+
+.shell { max-width: 1320px; margin: 0 auto; padding: 0 28px; position: relative; z-index: 1; }
+
+/* ---------------- scroll-reveal (IntersectionObserver-driven) ---------------- */
+[data-reveal] { opacity: 0; transform: translateY(22px); transition: opacity .7s var(--ease), transform .7s var(--ease); }
+[data-reveal].in-view { opacity: 1; transform: translateY(0); }
+@media (prefers-reduced-motion: reduce) { [data-reveal] { opacity: 1; transform: none; } }
+
+/* ---------------- header ---------------- */
+header.topbar {
+  border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 40;
+  background: rgba(7,6,13,0.72);
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+}
+.topbar-inner { display: flex; align-items: center; justify-content: space-between; height: 64px; gap: 12px; }
+.wordmark { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18.5px; letter-spacing: -0.2px; }
+.wordmark .mark {
+  width: 26px; height: 26px; border-radius: 8px; position: relative;
+  background: var(--grad); box-shadow: 0 0 18px rgba(139,92,246,0.55);
+}
+.wordmark .mark::after {
+  content: ""; position: absolute; inset: 5px; background: var(--bg); border-radius: 4px;
+  clip-path: polygon(0 0, 60% 0, 100% 100%, 40% 100%);
+}
+nav.toplinks { display: flex; gap: 30px; font-size: 14px; color: var(--muted); white-space: nowrap; overflow-x: auto; scrollbar-width: none; }
+nav.toplinks::-webkit-scrollbar { display: none; }
+nav.toplinks a { color: var(--muted); position: relative; padding-bottom: 4px; transition: color .18s ease; }
+nav.toplinks a:hover, nav.toplinks a.active { color: var(--text); text-decoration: none; }
+nav.toplinks a::after {
+  content: ""; position: absolute; left: 0; right: 100%; bottom: 0; height: 2px; border-radius: 2px;
+  background: var(--grad); transition: right .25s var(--ease);
+}
+nav.toplinks a:hover::after, nav.toplinks a.active::after { right: 0; }
+
+@media (max-width: 560px) {
+  nav.toplinks { gap: 16px; font-size: 13px; }
+  .wordmark { font-size: 15px; flex-shrink: 0; }
+}
+
+/* ---------------- buttons ---------------- */
+.btn {
+  font-family: var(--sans); font-size: 14.5px; font-weight: 600;
+  border-radius: var(--r-md); padding: 12px 22px; cursor: pointer;
+  border: 1px solid transparent; position: relative; overflow: hidden;
+  transition: transform 0.18s var(--ease), background 0.2s ease, border-color .2s ease, box-shadow 0.25s ease;
+}
+.btn:hover { transform: translateY(-2px); }
+.btn:active { transform: translateY(0) scale(0.97); transition-duration: .08s; }
+.btn .ripple {
+  position: absolute; border-radius: 50%; background: rgba(255,255,255,0.35);
+  transform: scale(0); pointer-events: none; animation: rippleOut .6s ease-out forwards;
+}
+.btn-ghost .ripple, .btn-danger-ghost .ripple { background: rgba(255,255,255,0.14); }
+@keyframes rippleOut { to { transform: scale(2.6); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .btn:hover { transform: none; } .btn .ripple { display: none; } }
+
+.btn-primary {
+  background: var(--grad); background-size: 180% 180%; background-position: 0% 50%;
+  color: #0d0716; box-shadow: 0 8px 24px -8px rgba(139,92,246,0.55);
+}
+.btn-primary:hover { background-position: 100% 50%; box-shadow: 0 10px 32px -6px rgba(139,92,246,0.7); }
+.btn-primary:disabled { opacity: 0.45; cursor: progress; transform: none; box-shadow: none; }
+@media (prefers-reduced-motion: no-preference) {
+  #obfuscate-btn:not(:disabled) { animation: ctaGlow 2.8s ease-in-out infinite; }
+  @keyframes ctaGlow {
+    0%, 100% { box-shadow: 0 8px 24px -8px rgba(139,92,246,0.5); }
+    50% { box-shadow: 0 8px 34px -4px rgba(34,211,238,0.55); }
+  }
+}
+.btn-ghost { background: rgba(255,255,255,0.02); color: var(--text); border-color: var(--border); backdrop-filter: blur(6px); }
+.btn-ghost:hover { border-color: var(--violet-2); background: rgba(139,92,246,0.08); }
+.btn-sm { padding: 8px 14px; font-size: 13px; border-radius: var(--r-sm); }
+.btn-danger-ghost { background: transparent; color: var(--danger); border: 1px solid var(--danger-dim); }
+.btn-danger-ghost:hover { background: var(--danger-dim); }
+
+/* ---------------- hero ---------------- */
+.hero { padding: 72px 0 48px; position: relative; overflow: hidden; }
+.hero-mesh {
+  position: absolute; inset: -20% -10% auto -10%; height: 900px; z-index: 0; pointer-events: none;
+}
+.hero-mesh span {
+  position: absolute; border-radius: 50%; filter: blur(70px); opacity: 0.35;
+  animation: meshDrift 16s ease-in-out infinite alternate;
+}
+.hero-mesh span:nth-child(1) { width: 480px; height: 480px; left: 4%; top: 6%; background: var(--violet); }
+.hero-mesh span:nth-child(2) { width: 420px; height: 420px; right: 8%; top: 2%; background: var(--cyan); animation-delay: -5s; }
+.hero-mesh span:nth-child(3) { width: 360px; height: 360px; left: 38%; top: 30%; background: #c084fc; animation-delay: -10s; }
+@keyframes meshDrift {
+  from { transform: translate(0,0) scale(1); }
+  to   { transform: translate(30px,-24px) scale(1.08); }
+}
+@media (prefers-reduced-motion: reduce) { .hero-mesh span { animation: none; } }
+
+.hero-grid { display: grid; grid-template-columns: 1.05fr 0.95fr; gap: 52px; align-items: center; position: relative; z-index: 1; }
+.hero h1 {
+  font-size: 46px; line-height: 1.1; font-weight: 700; margin: 0 0 20px;
+  letter-spacing: -1px; max-width: 16ch;
+}
+.hero h1 .grad {
+  background: var(--grad-text); -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.hero p.lede { color: var(--muted); font-size: 17.5px; max-width: 46ch; margin: 0 0 26px; }
+.hero .runtime-strip { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 30px; }
+.chip {
+  border: 1px solid var(--border); border-radius: 100px; padding: 6px 14px;
+  font-family: var(--mono); font-size: 12px; color: var(--muted);
+  background: rgba(255,255,255,0.02); backdrop-filter: blur(6px);
+  transition: border-color .18s ease, transform .18s ease, color .18s ease;
+}
+.chip:hover { border-color: var(--cyan); color: var(--text); transform: translateY(-2px); }
+.hero-actions { display: flex; gap: 14px; flex-wrap: wrap; }
+
+.hero-visual {
+  border: 1px solid var(--border-strong); border-radius: var(--r-xl); background: rgba(255,255,255,0.03);
+  backdrop-filter: blur(18px) saturate(150%); -webkit-backdrop-filter: blur(18px) saturate(150%);
+  overflow: hidden; box-shadow: 0 40px 90px -30px rgba(0,0,0,0.7), inset 0 1px 0 rgba(255,255,255,0.06);
+  position: relative;
+}
+.hero-visual::before {
+  content: ""; position: absolute; inset: 0; padding: 1px; border-radius: inherit; pointer-events: none;
+  background: linear-gradient(135deg, rgba(139,92,246,0.5), transparent 40%, transparent 70%, rgba(34,211,238,0.4));
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor; mask-composite: exclude;
+}
+.hero-visual .fake-titlebar {
+  display: flex; align-items: center; gap: 6px; padding: 12px 16px;
+  border-bottom: 1px solid var(--border); background: rgba(255,255,255,0.02);
+}
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border-strong); }
+.hero-visual pre {
+  margin: 0; padding: 20px; font-family: var(--mono); font-size: 12.5px; line-height: 1.8;
+  color: var(--muted); overflow: hidden;
+}
+.hero-visual .arrow-row {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  color: var(--muted-2); font-size: 12px; font-family: var(--mono); padding: 5px 0;
+  border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+  background: rgba(139,92,246,0.06);
+}
+.tok-kw { color: var(--cyan); }
+.tok-str { color: var(--gold); }
+.tok-fn { color: var(--violet-2); }
+.tok-com { color: var(--muted-2); }
+
+/* ---------------- section headers ---------------- */
+.section { padding: 72px 0; border-top: 1px solid var(--border); position: relative; z-index: 1; }
+.section-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 30px; gap: 24px; flex-wrap: wrap; }
+.section-head h2 { font-size: 28px; margin: 0; font-weight: 700; letter-spacing: -0.4px; }
+.section-head p { color: var(--muted); margin: 0; max-width: 52ch; font-size: 14.5px; }
+
+/* ---------------- tool layout ---------------- */
+.tool-grid { display: grid; grid-template-columns: 270px 1fr; gap: 22px; align-items: start; position: relative; }
+
+.panel {
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--r-lg);
+  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+}
+.panel-pad { padding: 20px; }
+
+.config-panel h3 { font-size: 12px; letter-spacing: 0.4px; color: var(--muted); margin: 0 0 14px; font-weight: 700; text-transform: uppercase; }
+.field { margin-bottom: 16px; }
+.field label { display: block; font-size: 13px; color: var(--text); margin-bottom: 6px; font-weight: 600; }
+.field .hint { color: var(--muted-2); font-size: 12px; margin-top: 4px; display: block; }
+select, .select {
+  width: 100%; background: var(--panel-raised); color: var(--text); border: 1px solid var(--border);
+  border-radius: var(--r-sm); padding: 10px 12px; font-family: var(--sans); font-size: 13.5px;
+  transition: border-color .18s ease;
+}
+select:focus { border-color: var(--violet-2); }
+.level-tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; }
+.level-tabs button {
+  background: var(--panel-raised); border: 1px solid var(--border); color: var(--muted);
+  border-radius: var(--r-sm); padding: 9px 4px; font-family: var(--mono); font-size: 11.5px; cursor: pointer;
+  transition: all .2s var(--ease); position: relative;
+}
+.level-tabs button:hover { border-color: var(--violet-2); transform: translateY(-2px); }
+.level-tabs button.active {
+  border-color: transparent; color: #0d0716; background: var(--grad); font-weight: 700;
+  box-shadow: 0 6px 18px -6px rgba(139,92,246,0.6); transform: translateY(-2px);
+}
+
+.toggle-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 0; border-bottom: 1px solid var(--border);
+}
+.toggle-row:last-child { border-bottom: none; }
+.toggle-row .label { flex: 1 1 auto; min-width: 0; font-size: 13.5px; }
+.toggle-row .label small { display: block; color: var(--muted-2); font-size: 11.5px; margin-top: 1px; }
+
+.switch { position: relative; width: 40px; height: 22px; flex-shrink: 0; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.switch .track { position: absolute; inset: 0; background: var(--border-strong); border-radius: 100px; cursor: pointer; transition: background .2s ease; }
+.switch .thumb { position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: var(--muted); transition: transform .25s var(--ease), background .2s ease; }
+.switch input:checked + .track { background: linear-gradient(90deg, var(--violet), var(--cyan)); }
+.switch input:checked + .track .thumb { transform: translateX(18px); background: #fff; }
+.switch input:disabled + .track { opacity: 0.4; cursor: not-allowed; }
+
+/* membership gating */
+.plan-badge {
+  font-family: var(--mono); font-size: 10px; font-weight: 700; color: #241705;
+  background: var(--gold); padding: 2px 8px; border-radius: 100px; text-transform: uppercase;
+}
+.member-tag {
+  font-family: var(--mono); font-size: 10px; color: var(--gold); border: 1px solid var(--gold-dim);
+  padding: 2px 8px; border-radius: 100px; flex-shrink: 0; white-space: nowrap;
+}
+.toggle-row.membership-locked .switch { opacity: 0.4; pointer-events: none; }
+.toggle-row.membership-locked .label { color: var(--muted-2); }
+.member-tag-sm {
+  display: none; font-family: var(--mono); font-size: 9px; color: var(--gold);
+  border: 1px solid var(--gold-dim); border-radius: 100px; padding: 0 4px; margin-left: 4px; vertical-align: middle;
+}
+.level-tabs button.membership-locked { color: var(--muted-2); }
+.level-tabs button.membership-locked .member-tag-sm { display: inline-block; }
+
+/* ---------------- editors ---------------- */
+.editors-wrap { display: flex; flex-direction: column; gap: 16px; }
+.editors-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 980px) { .editors-grid { grid-template-columns: 1fr; } .tool-grid { grid-template-columns: 1fr; } }
+
+.editor-card {
+  border: 1px solid var(--border); border-radius: var(--r-lg); overflow: hidden;
+  background: rgba(255,255,255,0.02); backdrop-filter: blur(14px); display: flex; flex-direction: column;
+  transition: border-color .25s ease, box-shadow .25s ease;
+}
+.editor-card:focus-within { border-color: var(--violet-2); box-shadow: 0 0 0 3px rgba(139,92,246,0.15); }
+.editor-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px; border-bottom: 1px solid var(--border); background: rgba(255,255,255,0.02);
+}
+.editor-header .title { font-family: var(--mono); font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 8px; }
+.editor-header .title .badge { font-size: 10.5px; padding: 2px 8px; border-radius: 100px; border: 1px solid var(--border); color: var(--muted-2); }
+.editor-header .actions { display: flex; gap: 6px; }
+.icon-btn {
+  background: transparent; border: 1px solid transparent; color: var(--muted);
+  padding: 6px 10px; border-radius: var(--r-sm); font-size: 12px; cursor: pointer; font-family: var(--sans);
+  transition: border-color .18s ease, color .18s ease, transform .12s ease;
+}
+.icon-btn:hover { border-color: var(--border-strong); color: var(--text); }
+.icon-btn:active { transform: scale(0.94); }
+
+.CodeMirror { height: 380px !important; font-family: var(--mono) !important; font-size: 13px !important; background: transparent !important; color: var(--text); }
+.CodeMirror-gutters { background: transparent !important; border-right: 1px solid var(--border) !important; }
+.CodeMirror-linenumber { color: var(--muted-2) !important; }
+.CodeMirror-cursor { border-left: 1px solid var(--cyan) !important; }
+.cm-s-opaque .cm-keyword { color: var(--cyan); }
+.cm-s-opaque .cm-string { color: var(--gold); }
+.cm-s-opaque .cm-comment { color: var(--muted-2); font-style: italic; }
+.cm-s-opaque .cm-def, .cm-s-opaque .cm-variable-2 { color: var(--violet-2); }
+.cm-s-opaque .cm-number { color: #86efac; }
+.cm-s-opaque .cm-operator { color: var(--text); }
+
+@media (prefers-reduced-motion: no-preference) {
+  .editor-card.reveal .CodeMirror { animation: outputIn .45s ease; }
+}
+@keyframes outputIn { from { opacity: 0.2; } to { opacity: 1; } }
+
+/* action row under editors */
+.action-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.obf-btn { min-width: 200px; display: flex; align-items: center; justify-content: center; gap: 10px; }
+.spinner { width: 14px; height: 14px; border-radius: 50%; border: 2px solid rgba(13,7,22,0.35); border-top-color: #0d0716; animation: spin 0.7s linear infinite; display: none; }
+.obf-btn.loading .spinner { display: inline-block; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.token-cost-note { font-family: var(--mono); font-size: 12px; color: var(--muted-2); display: flex; align-items: center; gap: 6px; }
+.token-cost-note .coin-sm { width: 13px; height: 13px; border-radius: 50%; background-image: url(data:image/png;base64,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); background-size: cover; background-position: center; }
+
+.stats-row { display: flex; gap: 22px; font-family: var(--mono); font-size: 12.5px; color: var(--muted); flex-wrap: wrap; }
+.stats-row b { color: var(--text); font-weight: 700; }
+.stats-row .delta-up { color: var(--gold); }
+
+.error-box {
+  border: 1px solid var(--danger-dim); background: rgba(251,113,133,0.08); border-radius: var(--r-sm);
+  padding: 13px 15px; font-size: 13.5px; display: none;
+}
+.error-box.show { display: block; }
+.error-box .etitle { color: var(--danger); font-weight: 700; margin-bottom: 3px; }
+.error-box .eloc { font-family: var(--mono); color: var(--muted); font-size: 12.5px; }
+
+.notice {
+  border: 1px solid var(--border); background: rgba(255,255,255,0.02); border-radius: var(--r-sm);
+  padding: 13px 15px; font-size: 13px; color: var(--muted); display: flex; gap: 10px; align-items: flex-start;
+}
+.notice .dot-ind { width: 6px; height: 6px; border-radius: 50%; background: var(--cyan); margin-top: 6px; flex-shrink: 0; box-shadow: 0 0 8px var(--cyan); }
+
+.toast {
+  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(20px);
+  background: var(--panel-raised); border: 1px solid var(--border-strong); color: var(--text);
+  padding: 11px 20px; border-radius: var(--r-md); font-size: 13.5px; opacity: 0; pointer-events: none;
+  transition: opacity .2s ease, transform .2s ease; z-index: 100; box-shadow: 0 20px 50px -10px rgba(0,0,0,0.6);
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* ---------------- tool lock overlay ---------------- */
+.tool-grid.locked > aside, .tool-grid.locked > .editors-wrap {
+  filter: blur(3px); opacity: 0.4; pointer-events: none; user-select: none;
+}
+.lock-overlay { position: absolute; inset: 0; z-index: 30; display: none; align-items: center; justify-content: center; padding: 20px; }
+.tool-grid.locked .lock-overlay { display: flex; }
+.lock-card {
+  background: var(--panel-solid); border: 1px solid var(--border-strong); border-radius: var(--r-lg);
+  padding: 30px 34px; text-align: center; max-width: 380px;
+  box-shadow: 0 40px 80px -20px rgba(0,0,0,0.7);
+  animation: modalIn .3s var(--ease);
+}
+.lock-card .lock-icon {
+  width: 44px; height: 44px; border-radius: 50%; margin: 0 auto 16px;
+  background: rgba(242,194,101,0.12); border: 1px solid var(--gold-dim);
+  display: flex; align-items: center; justify-content: center; font-size: 19px;
+}
+.lock-card h4 { margin: 0 0 8px; font-size: 17px; font-weight: 700; }
+.lock-card p { margin: 0 0 20px; color: var(--muted); font-size: 13.5px; line-height: 1.6; }
+.lock-card code { font-family: var(--mono); background: var(--panel-raised); padding: 1px 6px; border-radius: 4px; font-size: 12px; color: var(--cyan); }
+
+/* ---------------- account area / auth modal ---------------- */
+.account-area { display: flex; align-items: center; gap: 8px; }
+.account-chip {
+  display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 12.5px;
+  color: var(--muted); border: 1px solid var(--border); border-radius: 100px; padding: 7px 14px;
+  background: rgba(255,255,255,0.02);
+}
+.account-chip .email { color: var(--text); max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-chip button { background: none; border: none; color: var(--muted-2); cursor: pointer; font-family: var(--sans); font-size: 12px; padding: 0; }
+.account-chip button:hover { color: var(--danger); }
+
+.auth-tabs, .buy-tabs { display: flex; gap: 6px; margin-bottom: 16px; border-bottom: 1px solid var(--border); }
+.auth-tab, .buy-tab {
+  background: none; border: none; color: var(--muted); padding: 9px 4px 11px; font-size: 13.5px; font-weight: 700;
+  cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; transition: color .18s ease, border-color .18s ease;
+  display: flex; align-items: center; gap: 6px;
+}
+.auth-tab:hover, .buy-tab:hover { color: var(--text); }
+.auth-tab.active, .buy-tab.active { color: var(--text); border-bottom-color: transparent; position: relative; }
+.auth-tab.active::after, .buy-tab.active::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: -2px; height: 2px; border-radius: 2px; background: var(--grad);
+}
+.auth-bonus { font-family: var(--mono); font-size: 10.5px; background: rgba(242,194,101,0.12); color: var(--gold); padding: 1px 6px; border-radius: 100px; }
+
+.text-input {
+  width: 100%; background: var(--panel-raised); color: var(--text); border: 1px solid var(--border);
+  border-radius: var(--r-sm); padding: 11px 13px; font-family: var(--sans); font-size: 13.5px; transition: border-color .18s ease;
+}
+.text-input:focus { outline: none; border-color: var(--violet-2); }
+.auth-error { color: var(--danger); font-size: 12.5px; min-height: 0; margin-bottom: 12px; }
+.auth-error:empty { display: none; }
+.backend-banner {
+  border: 1px solid var(--gold-dim); background: rgba(242,194,101,0.08); border-radius: var(--r-sm);
+  padding: 11px 14px; font-size: 12px; color: var(--gold); margin-bottom: 16px; line-height: 1.5;
+}
+
+/* ---------------- token pill / wallet ---------------- */
+.token-pill {
+  display: flex; align-items: center; gap: 8px; border: 1px solid var(--border);
+  background: rgba(255,255,255,0.03); border-radius: 100px; padding: 7px 9px 7px 13px;
+  font-family: var(--mono); font-size: 12.5px; color: var(--text); cursor: pointer;
+  transition: border-color .2s ease, transform .18s var(--ease), box-shadow .25s ease;
+  position: relative; overflow: hidden; backdrop-filter: blur(10px);
+}
+.token-pill:hover { border-color: var(--violet-2); transform: translateY(-2px); box-shadow: 0 8px 20px -6px rgba(139,92,246,0.4); }
+.token-pill:active { transform: translateY(0) scale(0.96); }
+.token-pill .coin { width: 19px; height: 19px; border-radius: 50%; flex-shrink: 0; background-image: url(data:image/png;base64,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); background-size: cover; background-position: center; filter: drop-shadow(0 0 5px rgba(34,211,238,0.5)); }
+.token-pill .count { min-width: 2ch; text-align: right; }
+.token-pill .count.bump { animation: bump 0.4s var(--ease); }
+@keyframes bump { 0% { transform: scale(1); } 35% { transform: scale(1.3); color: var(--cyan); } 100% { transform: scale(1); } }
+.token-pill .buy-label { color: var(--muted-2); font-family: var(--sans); font-size: 11.5px; padding-left: 2px; }
+.token-pill .plan-badge { margin-left: 2px; }
+
+/* ---------------- modal ---------------- */
+.modal-overlay { position: fixed; inset: 0; background: rgba(4,3,9,0.78); backdrop-filter: blur(4px); display: none; align-items: center; justify-content: center; z-index: 200; padding: 20px; }
+.modal-overlay.show { display: flex; animation: overlayIn .2s ease; }
+@keyframes overlayIn { from { opacity: 0; } to { opacity: 1; } }
+.modal-card {
+  background: var(--panel-solid); border: 1px solid var(--border-strong); border-radius: var(--r-xl);
+  max-width: 580px; width: 100%; padding: 28px; box-shadow: 0 50px 100px -20px rgba(0,0,0,0.75);
+  animation: modalIn .28s var(--ease); position: relative; overflow: hidden;
+}
+.modal-card::before {
+  content: ""; position: absolute; inset: 0; padding: 1px; border-radius: inherit; pointer-events: none;
+  background: linear-gradient(135deg, rgba(139,92,246,0.4), transparent 50%);
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor; mask-composite: exclude;
+}
+@keyframes modalIn { from { opacity: 0; transform: translateY(16px) scale(.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
+.modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.modal-head h3 { margin: 0; font-size: 20px; font-weight: 700; }
+.modal-close { background: transparent; border: none; color: var(--muted); font-size: 20px; cursor: pointer; line-height: 1; padding: 4px; }
+.modal-close:hover { color: var(--text); }
+.modal-sub { color: var(--muted); font-size: 13.5px; margin: 0 0 18px; }
+.demo-banner {
+  border: 1px solid var(--gold-dim); background: rgba(242,194,101,0.08); border-radius: var(--r-sm);
+  padding: 11px 14px; font-size: 12.5px; color: var(--gold); margin-bottom: 18px; display: flex; gap: 8px; align-items: flex-start;
+}
+.demo-banner > span:first-child { flex-shrink: 0; }
+.pkg-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 8px; }
+@media (max-width: 560px) { .pkg-grid { grid-template-columns: 1fr; } }
+.pkg-card {
+  border: 1px solid var(--border); border-radius: var(--r-md); padding: 18px 15px; text-align: left;
+  background: rgba(255,255,255,0.03); cursor: pointer; transition: border-color .2s ease, transform .18s var(--ease), box-shadow .2s ease;
+}
+.pkg-card:hover { border-color: var(--violet-2); transform: translateY(-3px); box-shadow: 0 12px 30px -10px rgba(139,92,246,0.4); }
+.pkg-card .amt { font-family: var(--mono); font-size: 21px; font-weight: 700; color: var(--text); }
+.pkg-card .amt small { font-size: 12px; color: var(--muted-2); font-weight: 400; }
+.pkg-card .price { color: var(--gold); font-family: var(--mono); font-size: 14px; margin-top: 5px; }
+.pkg-card .per { color: var(--muted-2); font-size: 11.5px; margin-top: 3px; }
+.pkg-card.best { border-color: var(--gold); position: relative; }
+.pkg-card.best::before {
+  content: "Most popular"; position: absolute; top: -10px; left: 14px; background: var(--gold); color: #241705;
+  font-size: 10.5px; font-weight: 700; padding: 2px 9px; border-radius: 100px;
+}
+.plan-card .per-mo { font-size: 11px; color: var(--muted-2); }
+
+/* ---------------- hero anim ---------------- */
+@media (prefers-reduced-motion: no-preference) {
+  .hero-anim { opacity: 0; transform: translateY(16px); animation: heroIn .6s var(--ease) forwards; }
+  .hero-anim.d1 { animation-delay: .05s; }
+  .hero-anim.d2 { animation-delay: .14s; }
+  .hero-anim.d3 { animation-delay: .23s; }
+  .hero-anim.d4 { animation-delay: .32s; }
+}
+@keyframes heroIn { to { opacity: 1; transform: translateY(0); } }
+
+/* ---------------- docs / safety / cards ---------------- */
+.doc-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+@media (max-width: 900px) { .doc-grid { grid-template-columns: 1fr; } .hero-grid { grid-template-columns: 1fr; } .doc-two { grid-template-columns: 1fr !important; } }
+.doc-card {
+  border: 1px solid var(--border); border-radius: var(--r-lg); padding: 20px;
+  background: rgba(255,255,255,0.025); backdrop-filter: blur(10px);
+  transition: transform .25s var(--ease), border-color .25s ease, box-shadow .25s ease;
+}
+.doc-card:hover { transform: translateY(-4px); border-color: var(--violet-2); box-shadow: 0 16px 40px -14px rgba(139,92,246,0.35); }
+.doc-card h4 { margin: 0 0 8px; font-size: 15.5px; font-weight: 700; }
+.doc-card p { margin: 0; color: var(--muted); font-size: 13.5px; }
+
+.safety-block { background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 28px; backdrop-filter: blur(12px); }
+.safety-block .verdict { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.safety-block .verdict .pill { font-family: var(--mono); font-size: 12px; border: 1px solid var(--cyan); color: var(--cyan); padding: 4px 12px; border-radius: 100px; }
+.safety-block p { color: var(--muted); max-width: 74ch; }
+.safety-block ul { color: var(--muted); font-size: 14px; padding-left: 20px; }
+.safety-block li { margin-bottom: 6px; }
+
+.doc-two { display: grid; grid-template-columns: 240px 1fr; gap: 32px; }
+.doc-nav { position: sticky; top: 84px; display: flex; flex-direction: column; gap: 3px; align-self: start; }
+.doc-nav a { color: var(--muted); font-size: 13.5px; padding: 8px 12px; border-radius: var(--r-sm); transition: background .18s ease, color .18s ease; }
+.doc-nav a:hover { background: rgba(139,92,246,0.08); text-decoration: none; color: var(--text); }
+.doc-section { margin-bottom: 36px; }
+.doc-section h3 { font-size: 18px; margin-bottom: 10px; font-weight: 700; }
+.doc-section p, .doc-section li { color: var(--muted); font-size: 14px; }
+.doc-section code { font-family: var(--mono); background: rgba(255,255,255,0.05); padding: 1px 6px; border-radius: 5px; font-size: 12.5px; color: var(--cyan); }
+table.compat { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.compat th, table.compat td { border: 1px solid var(--border); padding: 9px 11px; text-align: left; }
+table.compat th { background: rgba(255,255,255,0.03); color: var(--muted); font-weight: 700; font-size: 12.5px; }
+table.compat td { color: var(--muted); }
+table.compat td.yes { color: var(--cyan); }
+table.compat td.no { color: var(--muted-2); }
+
+footer { border-top: 1px solid var(--border); padding: 34px 0; color: var(--muted-2); font-size: 13px; position: relative; z-index: 1; }
+footer .foot-row { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+
+@media (max-width: 640px) {
+  .hero h1 { font-size: 32px; }
+  .doc-two { grid-template-columns: 1fr; }
+  .doc-nav { position: static; flex-direction: row; flex-wrap: wrap; }
+}
+
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="shell topbar-inner">
+    <div class="wordmark"><span class="mark"></span>OPAQUE</div>
+    <nav class="toplinks">
+      <a href="#tool" data-nav class="active">Obfuscator</a>
+      <a href="#docs" data-nav>Documentation</a>
+      <a href="#safety" data-nav>Is this safe?</a>
+      <a href="#about" data-nav>About</a>
+    </nav>
+    <button class="token-pill" id="token-pill" title="Buy tokens">
+      <span class="coin"></span><span class="count" id="token-count">–</span><span class="plan-badge" id="token-plan-badge" style="display:none;"></span><span class="buy-label">Buy</span>
+    </button>
+    <div id="account-area" class="account-area">
+      <button class="btn btn-ghost btn-sm" id="login-open-btn">Log in</button>
+    </div>
+  </div>
+</header>
+
+<div class="modal-overlay" id="auth-modal">
+  <div class="modal-card">
+    <div class="modal-head"><h3 id="auth-title">Log in</h3><button class="modal-close" id="auth-close">&times;</button></div>
+    <div class="auth-tabs">
+      <button class="auth-tab active" data-tab="login">Log in</button>
+      <button class="auth-tab" data-tab="register">Create account <span class="auth-bonus">+100 free</span></button>
+    </div>
+    <p class="modal-sub" id="auth-sub">Welcome back.</p>
+    <div class="backend-banner" id="backend-offline-banner" style="display:none;">
+      ⚠ No account server detected at this address. Run <code style="font-family:inherit">node server/server.js</code> and open this page from that server (e.g. http://localhost:3000) to enable real accounts — see server/README.md. Falling back to local demo credits for now.
+    </div>
+    <form id="auth-form">
+      <div class="field">
+        <label for="auth-email">Email</label>
+        <input type="email" id="auth-email" class="text-input" autocomplete="email" required>
+      </div>
+      <div class="field">
+        <label for="auth-password">Password</label>
+        <input type="password" id="auth-password" class="text-input" autocomplete="current-password" required minlength="8">
+        <span class="hint" id="auth-password-hint">At least 8 characters.</span>
+      </div>
+      <div class="auth-error" id="auth-error"></div>
+      <button type="submit" class="btn btn-primary" id="auth-submit" style="width:100%;">Log in</button>
+    </form>
+  </div>
+</div>
+
+<div class="modal-overlay" id="buy-modal">
+  <div class="modal-card">
+    <div class="modal-head"><h3>Get more tokens</h3><button class="modal-close" id="modal-close">&times;</button></div>
+    <div class="buy-tabs">
+      <button class="buy-tab active" data-tab="single">One-time tokens</button>
+      <button class="buy-tab" data-tab="membership">Memberships</button>
+    </div>
+    <div class="demo-banner"><span>⚠</span><span>Demo mode: no real payment is processed here. These buttons just credit your account so you can try the flow. Wire <code style="font-family:inherit">buySingleUsePack()</code> / <code style="font-family:inherit">subscribeToPlan()</code> in app.js to Stripe Checkout (or your payment backend) to charge real money.</span></div>
+
+    <div id="single-use-pane">
+      <p class="modal-sub">Each token is good for exactly one obfuscation run. Restricted to LOW/MEDIUM levels — no control flow, dead code, or VM protection. Never expire.</p>
+      <div class="pkg-grid" id="single-use-packages"><!-- filled from /api/plans --></div>
+    </div>
+    <div id="membership-pane" style="display:none;">
+      <p class="modal-sub">A daily allowance of tokens that renews every 24 hours, and every level &amp; option unlocked (HIGH, EXTREME, control flow, dead code, VM protection).</p>
+      <div class="pkg-grid" id="membership-plans"><!-- filled from /api/plans --></div>
+    </div>
+  </div>
+</div>
+
+<section class="hero">
+  <div class="hero-mesh" aria-hidden="true"><span></span><span></span><span></span></div>
+  <div class="shell hero-grid">
+    <div>
+      <h1 class="hero-anim d1">Make your <span class="grad">Lua and Luau</span> harder to read, not harder to run.</h1>
+      <p class="lede hero-anim d2">OPAQUE parses your code into a real syntax tree, renames locals, rewrites strings and control flow, then regenerates working source — entirely in your browser.</p>
+      <div class="runtime-strip hero-anim d3">
+        <span class="chip">Lua 5.1</span><span class="chip">Lua 5.2</span><span class="chip">Lua 5.3</span>
+        <span class="chip">Lua 5.4</span><span class="chip">LuaJIT</span><span class="chip">Roblox Luau</span>
+      </div>
+      <div class="hero-actions hero-anim d4">
+        <button class="btn btn-primary" onclick="document.getElementById('tool').scrollIntoView({behavior:'smooth'})">Open the obfuscator</button>
+        <a class="btn btn-ghost" href="#safety">Read how it protects your code</a>
+      </div>
+    </div>
+    <div class="hero-visual hero-anim d2" aria-hidden="true">
+      <div class="fake-titlebar"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+      <pre><span class="tok-kw">local</span> <span class="tok-fn">playerSpeed</span> = <span class="tok-str">100</span>
+<span class="tok-kw">local</span> <span class="tok-fn">playerName</span> = <span class="tok-str">"Samy"</span>
+<span class="tok-com">-- WalkSpeed multiplier</span></pre>
+      <div class="arrow-row">↓ lex · parse · transform · generate ↓</div>
+      <pre><span class="tok-kw">local</span> a = string.char(<span class="tok-str">105-5,...</span>)
+<span class="tok-kw">local</span> b = <span class="tok-str">(182-82)</span></pre>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="tool">
+  <div class="shell">
+    <div class="section-head">
+      <h2>The obfuscator</h2>
+      <p>Pick a runtime and a level, paste code on the left, and press Obfuscate. Everything runs client-side — nothing is uploaded anywhere.</p>
+    </div>
+
+    <div class="tool-grid locked" id="tool-grid">
+      <div class="lock-overlay" id="lock-overlay">
+        <div class="lock-card">
+          <div class="lock-icon">🔒</div>
+          <h4 id="lock-title">Log in to unlock the obfuscator</h4>
+          <p id="lock-desc">Create a free account and get 100 credits, or log in if you already have one.</p>
+          <button class="btn btn-primary" id="lock-cta" style="width:100%;">Log in / Sign up</button>
+        </div>
+      </div>
+      <aside class="panel panel-pad config-panel">
+        <h3>Runtime</h3>
+        <div class="field">
+          <select id="runtime-select">
+            <option value="lua51">Lua 5.1</option>
+            <option value="lua52">Lua 5.2</option>
+            <option value="lua53">Lua 5.3</option>
+            <option value="lua54">Lua 5.4</option>
+            <option value="luajit">LuaJIT</option>
+            <option value="luau" selected>Roblox Luau</option>
+          </select>
+          <span class="hint" id="runtime-note"></span>
+        </div>
+
+        <h3 style="margin-top:22px;">Obfuscation level</h3>
+        <div class="field">
+          <div class="level-tabs">
+            <button data-level="LOW">LOW</button>
+            <button data-level="MEDIUM">MEDIUM</button>
+            <button data-level="HIGH">HIGH<span class="member-tag-sm">M</span></button>
+            <button data-level="EXTREME">EXTREME<span class="member-tag-sm">M</span></button>
+          </div>
+          <span class="hint">Each level is a real preset below — adjust any option independently.</span>
+        </div>
+
+        <h3 style="margin-top:22px;">Options</h3>
+        <div class="toggle-row">
+          <div class="label">Rename identifiers<small>Locals &amp; params only, scope-aware</small></div>
+          <label class="switch"><input type="checkbox" data-opt="renameIdentifiers"><span class="track"><span class="thumb"></span></span></label>
+        </div>
+        <div class="toggle-row">
+          <div class="label">String obfuscation<small>Byte-exact reconstruction</small></div>
+          <label class="switch"><input type="checkbox" data-opt="stringObfuscation"><span class="track"><span class="thumb"></span></span></label>
+        </div>
+        <div class="toggle-row">
+          <div class="label">Constant transform<small>Numbers &amp; booleans as expressions</small></div>
+          <label class="switch"><input type="checkbox" data-opt="constantTransform"><span class="track"><span class="thumb"></span></span></label>
+        </div>
+        <div class="toggle-row">
+          <div class="label">Control flow<small>Safe opaque wrapping of blocks</small></div><span class="member-tag">Membership</span>
+          <label class="switch"><input type="checkbox" data-opt="controlFlow"><span class="track"><span class="thumb"></span></span></label>
+        </div>
+        <div class="toggle-row">
+          <div class="label">VM protection<small>Bytecode interpreter for constants</small></div><span class="member-tag">Membership</span>
+          <label class="switch"><input type="checkbox" data-opt="vmProtection"><span class="track"><span class="thumb"></span></span></label>
+        </div>
+        <div class="toggle-row">
+          <div class="label">Dead code<small>Unused, side-effect-free locals</small></div><span class="member-tag">Membership</span>
+          <label class="switch"><input type="checkbox" data-opt="deadCode"><span class="track"><span class="thumb"></span></span></label>
+        </div>
+        <div class="toggle-row">
+          <div class="label">Minify<small>Strip whitespace &amp; blank lines</small></div>
+          <label class="switch"><input type="checkbox" data-opt="minify"><span class="track"><span class="thumb"></span></span></label>
+        </div>
+        <div class="toggle-row">
+          <div class="label">Remove comments</div>
+          <label class="switch"><input type="checkbox" data-opt="removeComments"><span class="track"><span class="thumb"></span></span></label>
+        </div>
+        <div class="toggle-row">
+          <div class="label">Watermark header<small>Visible "protected by OPAQUE" comment</small></div>
+          <label class="switch"><input type="checkbox" data-opt="watermark"><span class="track"><span class="thumb"></span></span></label>
+        </div>
+      </aside>
+
+      <div class="editors-wrap">
+        <div class="editors-grid">
+          <div class="editor-card">
+            <div class="editor-header">
+              <div class="title">INPUT <span class="badge" id="input-stat">empty</span></div>
+              <div class="actions">
+                <button class="icon-btn" id="sample-btn">Load sample</button>
+              </div>
+            </div>
+            <div class="editor-body" id="editor-input"></div>
+          </div>
+          <div class="editor-card">
+            <div class="editor-header">
+              <div class="title">OUTPUT</div>
+              <div class="actions">
+                <button class="icon-btn" id="copy-btn">Copy</button>
+                <button class="icon-btn" id="download-btn">Download</button>
+              </div>
+            </div>
+            <div class="editor-body" id="editor-output"></div>
+          </div>
+        </div>
+
+        <div class="error-box" id="error-box"></div>
+
+        <div class="action-row">
+          <div style="display:flex; align-items:center; gap:12px;">
+            <button class="btn btn-primary obf-btn" id="obfuscate-btn">
+              <span class="spinner"></span><span class="btn-label">Obfuscate</span>
+            </button>
+            <span class="token-cost-note"><span class="coin-sm"></span><span>Cost: <b>1</b> token</span></span>
+          </div>
+          <div class="stats-row" id="stats-row" style="visibility:hidden;">
+            <span>Original: <b id="stat-orig">–</b></span>
+            <span>Output: <b id="stat-out">–</b></span>
+            <span>Size change: <b id="stat-delta">–</b></span>
+            <span>Lines: <b id="stat-lines">–</b></span>
+          </div>
+          <button class="btn btn-danger-ghost btn-sm" id="clear-btn">Clear</button>
+        </div>
+
+        <div class="notice"><span class="dot-ind"></span>Your code is processed securely and is not stored or shared — it runs entirely in this browser tab and is never sent to a server.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="shell">
+    <div class="section-head" data-reveal>
+      <h2>What OPAQUE actually does</h2>
+      <p>No part of this is decorative. Every toggle above changes real output from a real pipeline.</p>
+    </div>
+    <div class="doc-grid">
+      <div class="doc-card" data-reveal>
+        <h4>Code security</h4>
+        <p>Raises the effort needed to skim, search, or pattern-match your logic — variable names, literal strings, and structure all change.</p>
+      </div>
+      <div class="doc-card" data-reveal>
+        <h4>IP protection</h4>
+        <p>Keeps proprietary logic — pricing rules, anti-cheat checks, internal APIs — from being trivially copied out of a distributed script.</p>
+      </div>
+      <div class="doc-card" data-reveal>
+        <h4>Anti-tampering friction</h4>
+        <p>Renamed locals and restructured control flow make manual patching of a downloaded script slower and more error-prone.</p>
+      </div>
+      <div class="doc-card" data-reveal>
+        <h4>Reduced readability</h4>
+        <p>Comments and formatting — the parts humans rely on most — are stripped, leaving only what the runtime actually needs.</p>
+      </div>
+      <div class="doc-card" data-reveal>
+        <h4>Roblox-aware</h4>
+        <p>Understands Luau syntax and never renames <code>game</code>, <code>workspace</code>, service names, or other identifiers your code doesn't declare itself.</p>
+      </div>
+      <div class="doc-card" data-reveal>
+        <h4>License enforcement support</h4>
+        <p>A layer that makes it harder — not impossible — to strip out license checks bundled into a script.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="safety">
+  <div class="shell">
+    <div class="section-head" data-reveal>
+      <h2>Is this safe to use?</h2>
+    </div>
+    <div class="safety-block" data-reveal>
+      <div class="verdict"><span class="pill">Honest answer</span></div>
+      <p>OPAQUE transforms your code while keeping its behavior — as long as the transformations you enable are compatible with the runtime you selected, and the output passes the validation step (every result is re-parsed before it's shown to you; if that fails, you get an error instead of broken code).</p>
+      <p>Obfuscation makes code harder to read and modify. It is <strong>not encryption</strong>, and it is not a guarantee against reverse engineering. Someone sufficiently determined — with time, tooling, or a decompiler — can still study and potentially reconstruct what obfuscated code does.</p>
+      <p>For anything sensitive, obfuscation should be one layer among several:</p>
+      <ul>
+        <li>Server-side validation for anything that matters (currency, permissions, anti-cheat decisions)</li>
+        <li>Authentication and authorization enforced where the client can't bypass them</li>
+        <li>Secrets and keys kept out of any code that ships to a client entirely</li>
+        <li>Access controls and secure architecture around the sensitive logic itself</li>
+      </ul>
+      <p>Don't rely on obfuscation as your only protection for anything you can't afford to have exposed.</p>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="docs">
+  <div class="shell doc-two">
+    <nav class="doc-nav">
+      <a href="#doc-runtimes" data-nav>Runtimes &amp; Luau</a>
+      <a href="#doc-levels" data-nav>Obfuscation levels</a>
+      <a href="#doc-transforms" data-nav>Transformations</a>
+      <a href="#doc-compat" data-nav>Compatibility</a>
+      <a href="#doc-limits" data-nav>Limitations</a>
+      <a href="#doc-privacy" data-nav>Privacy &amp; security</a>
+    </nav>
+    <div>
+      <div class="section-head" style="margin-bottom:20px;"><h2>Documentation</h2></div>
+
+      <div class="doc-section" id="doc-runtimes">
+        <h3>Runtimes &amp; Luau</h3>
+        <p>Selecting a runtime changes which grammar the parser accepts — it is not a label. Lua 5.1–5.4, LuaJIT, and Roblox Luau each enable a different feature set (bitwise operators, integer division, <code>goto</code>, Luau type annotations, <code>if</code>-expressions, compound assignment, string interpolation, <code>continue</code>).</p>
+        <p>Luau code is never downgraded to plain Lua. Type annotations are recognized and erased (they have no effect at runtime), but Luau-specific syntax and semantics are otherwise preserved as written.</p>
+      </div>
+
+      <div class="doc-section" id="doc-levels">
+        <h3>Obfuscation levels</h3>
+        <p><strong>LOW</strong> — rename locals, strip comments, minify.<br>
+        <strong>MEDIUM</strong> — adds string obfuscation and constant transforms.<br>
+        <strong>HIGH</strong> — adds safe control-flow wrapping.<br>
+        <strong>EXTREME</strong> — adds dead-code insertion on top of HIGH.</p>
+        <p>Any option can be toggled independently of the preset that's currently selected.</p>
+      </div>
+
+      <div class="doc-section" id="doc-transforms">
+        <h3>Transformations</h3>
+        <p><strong>Identifier renaming</strong> — purpose: shrink meaningful names to short opaque ones. Safety: only applies to locals and parameters resolved through real scope tracking during parsing; a name is only renamed if the parser proved it's a local declaration, never a guess. Globals, table keys, and member names (like <code>Humanoid</code>, <code>WalkSpeed</code>) are left untouched, since renaming them could break references you don't control. Unsupported case: identifiers introduced by constructs the parser doesn't model are left as-is rather than risk a mistake.</p>
+        <p><strong>String obfuscation</strong> — purpose: hide literal text. Method: strings are re-encoded byte-for-byte via <code>string.char</code> with a reversible additive mask per byte, so the exact original bytes are reconstructed at runtime. Limitation: adds real size and a small runtime cost per string.</p>
+        <p><strong>Constant transform</strong> — purpose: hide literal numbers/booleans. Method: small integers become arithmetic identities (e.g. <code>5</code> → <code>(8-3)</code>); <code>true</code>/<code>false</code> become equivalent comparisons. Risk: skipped for large numbers, hex/float/exponent forms, to avoid size blow-up or precision issues.</p>
+        <p><strong>Control flow</strong> — purpose: add structural noise. Method: blocks are wrapped in a single-iteration loop with an always-true numeric predicate, terminated by an immediate <code>break</code> — execution order is unchanged. Runtime compatibility: works identically on every supported runtime, since it only uses <code>while</code>/<code>break</code>.</p>
+        <p><strong>VM protection</strong> — purpose: hide string constants behind a small bytecode interpreter instead of visible inline arithmetic. Method: a tiny, plain-text (never itself obfuscated) stack-machine function is injected once per file; each string chunk becomes a flat array of opcodes (push / subtract / byte-to-char / concatenate) that the interpreter executes at runtime to rebuild the original bytes. Safety: the VM only ever operates on self-contained literal values passed to it — it never touches control flow, scoping, or anything referencing your own variables, so it cannot change what your script does. Requires String obfuscation to be on (it has nothing to protect otherwise).</p>
+        <p><strong>Dead code</strong> — purpose: add irrelevant declarations. Method: unused local declarations with unique generated names and literal values — never referenced, never causing side effects.</p>
+        <p><strong>Minification</strong> — removes insignificant whitespace and blank lines; statement boundaries are preserved using Lua's own empty-statement <code>;</code> separator so nothing is glued together incorrectly.</p>
+        <p><strong>Comment removal</strong> — comments are captured while reading your code and, when this option is off, re-attached near the statement they preceded (line-based, best-effort placement — not guaranteed pixel-identical to the original).</p>
+        <p><strong>Watermark header</strong> — a plain, visible <code>--</code> comment block at the very top of the output (run ID, level, runtime, timestamp). It's informational only: zero runtime effect, no hidden tracking beyond what's printed in the comment itself, and you can turn it off.</p>
+      </div>
+
+      <div class="doc-section" id="doc-compat">
+        <h3>Compatibility</h3>
+        <table class="compat">
+          <tr><th>Feature</th><th>5.1</th><th>5.2</th><th>5.3</th><th>5.4</th><th>LuaJIT</th><th>Luau</th></tr>
+          <tr><td>goto / labels</td><td class="no">–</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="no">–</td></tr>
+          <tr><td>Bitwise operators</td><td class="no">–</td><td class="no">–</td><td class="yes">✓</td><td class="yes">✓</td><td class="no">–</td><td class="no">–</td></tr>
+          <tr><td>Integer division //</td><td class="no">–</td><td class="no">–</td><td class="yes">✓</td><td class="yes">✓</td><td class="no">–</td><td class="yes">✓</td></tr>
+          <tr><td>continue</td><td class="no">–</td><td class="no">–</td><td class="no">–</td><td class="no">–</td><td class="no">–</td><td class="yes">✓</td></tr>
+          <tr><td>Type annotations</td><td class="no">–</td><td class="no">–</td><td class="no">–</td><td class="no">–</td><td class="no">–</td><td class="yes">✓</td></tr>
+          <tr><td>if-expressions</td><td class="no">–</td><td class="no">–</td><td class="no">–</td><td class="no">–</td><td class="no">–</td><td class="yes">✓</td></tr>
+        </table>
+        <p>If a transformation isn't valid for the selected runtime, it's disabled for that run rather than applied incorrectly.</p>
+      </div>
+
+      <div class="doc-section" id="doc-limits">
+        <h3>Limitations</h3>
+        <ul>
+          <li>The parser covers the common core of each grammar used in real-world scripts. Unusual or highly exotic syntax may be reported as a parse error rather than guessed at — see the checklist in the delivery report for exactly what's covered.</li>
+          <li>Table keys and member names are intentionally never renamed, since the parser can't always prove a table isn't accessed dynamically elsewhere (e.g. from another script).</li>
+          <li>Obfuscation increases output size and adds a small amount of runtime overhead, particularly at HIGH/EXTREME.</li>
+          <li>This is not encryption and not a guarantee against reverse engineering — see "Is this safe to use?" above.</li>
+        </ul>
+      </div>
+
+      <div class="doc-section" id="doc-privacy">
+        <h3>Privacy &amp; security</h3>
+        <p>This build runs the entire pipeline — lexer, parser, transformations, code generator, and output validation — as JavaScript in your browser tab. Your code is never transmitted anywhere: there is no upload, no server-side processing, and nothing to store or log, because no backend is involved in producing your result.</p>
+        <p>This is a deliberate architecture choice: it's strictly more private than a server-side design (nothing ever leaves your machine), at the cost of relying on your browser's JavaScript performance for very large inputs. See the delivery report for how this could be extended with an isolated backend for heavier workloads.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer id="about">
+  <div class="shell foot-row">
+    <div>OPAQUE — a Lua/Luau obfuscation tool. Not affiliated with Roblox Corporation or the Lua project.</div>
+    <div>Client-side pipeline · No accounts · No stored code</div>
+  </div>
+</footer>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/lua/lua.min.js"></script>
+<script>
+// ===== Lua/Luau Obfuscation Engine (bundled for browser) =====
+// Lua/Luau Lexer
+// Produces tokens with {type, value, line, col, start, end}
+// Also collects comments separately (with line) so they can optionally be
+// re-emitted by the code generator.
+
+const KEYWORDS = new Set([
+  "and","break","do","else","elseif","end","false","for","function","goto",
+  "if","in","local","nil","not","or","repeat","return","then","true",
+  "until","while","continue" // 'continue' only truly a keyword in Luau; handled contextually
+]);
+
+class LexError extends Error {
+  constructor(message, line, col) {
+    super(message);
+    this.line = line;
+    this.col = col;
+    this.name = "LexError";
+  }
+}
+
+function isDigit(c) { return c >= "0" && c <= "9"; }
+function isHexDigit(c) { return isDigit(c) || (c >= "a" && c <= "f") || (c >= "A" && c <= "F"); }
+function isAlpha(c) { return (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || c === "_"; }
+function isAlphaNum(c) { return isAlpha(c) || isDigit(c); }
+
+class Lexer {
+  constructor(src, opts = {}) {
+    this.src = src;
+    this.i = 0;
+    this.line = 1;
+    this.col = 1;
+    this.len = src.length;
+    this.tokens = [];
+    this.comments = [];
+    this.luau = !!opts.luau; // enables //, string interpolation, continue as keyword, compound assign
+  }
+
+  error(msg, line = this.line, col = this.col) {
+    throw new LexError(msg, line, col);
+  }
+
+  peek(o = 0) { return this.src[this.i + o]; }
+
+  advance() {
+    const c = this.src[this.i++];
+    if (c === "\n") { this.line++; this.col = 1; } else { this.col++; }
+    return c;
+  }
+
+  match(c) {
+    if (this.peek() === c) { this.advance(); return true; }
+    return false;
+  }
+
+  push(type, value, line, col) {
+    this.tokens.push({ type, value, line, col });
+  }
+
+  longBracketLevel() {
+    // at '[' check for [=*[ ; returns level or -1 if not a long bracket opener
+    let j = this.i + 1;
+    let level = 0;
+    while (this.src[j] === "=") { level++; j++; }
+    if (this.src[j] === "[") return level;
+    return -1;
+  }
+
+  readLongBracket(level, isComment) {
+    // assumes current char is '[' and we've verified opener; consumes opener
+    const startLine = this.line, startCol = this.col;
+    this.advance(); // '['
+    for (let k = 0; k < level; k++) this.advance(); // '='
+    this.advance(); // '['
+    // skip first newline immediately after opening, per Lua spec
+    if (this.peek() === "\r") { this.advance(); if (this.peek() === "\n") this.advance(); }
+    else if (this.peek() === "\n") { this.advance(); if (this.peek() === "\r") this.advance(); }
+    let out = "";
+    while (true) {
+      if (this.i >= this.len) this.error(`unfinished long ${isComment ? "comment" : "string"}`, startLine, startCol);
+      if (this.peek() === "]") {
+        let j = this.i + 1, lvl = 0;
+        while (this.src[j] === "=") { lvl++; j++; }
+        if (lvl === level && this.src[j] === "]") {
+          this.advance();
+          for (let k = 0; k < level; k++) this.advance();
+          this.advance();
+          return { text: out, line: startLine, col: startCol };
+        }
+      }
+      out += this.advance();
+    }
+  }
+
+  readShortString(quote) {
+    const startLine = this.line, startCol = this.col;
+    this.advance(); // opening quote
+    let out = "";
+    let rawBytes = []; // to preserve exact escape-decoded bytes (UTF-8 encoded)
+    while (true) {
+      if (this.i >= this.len) this.error("unfinished string", startLine, startCol);
+      const c = this.peek();
+      if (c === "\n") this.error("unfinished string (newline in short string)", this.line, this.col);
+      if (c === quote) { this.advance(); break; }
+      if (c === "\\") {
+        this.advance();
+        const e = this.peek();
+        switch (e) {
+          case "n": out += "\n"; this.advance(); break;
+          case "t": out += "\t"; this.advance(); break;
+          case "r": out += "\r"; this.advance(); break;
+          case "a": out += "\x07"; this.advance(); break;
+          case "b": out += "\b"; this.advance(); break;
+          case "f": out += "\f"; this.advance(); break;
+          case "v": out += "\v"; this.advance(); break;
+          case "\\": out += "\\"; this.advance(); break;
+          case "\"": out += "\""; this.advance(); break;
+          case "'": out += "'"; this.advance(); break;
+          case "\n": out += "\n"; this.advance(); break;
+          case "z": {
+            this.advance();
+            while (/\s/.test(this.peek())) this.advance();
+            break;
+          }
+          case "x": {
+            this.advance();
+            let hex = "";
+            for (let k = 0; k < 2; k++) {
+              if (!isHexDigit(this.peek())) this.error("hexadecimal digit expected", this.line, this.col);
+              hex += this.advance();
+            }
+            out += String.fromCharCode(parseInt(hex, 16));
+            break;
+          }
+          default: {
+            if (isDigit(e)) {
+              let num = "";
+              for (let k = 0; k < 3 && isDigit(this.peek()); k++) num += this.advance();
+              const code = parseInt(num, 10);
+              if (code > 255) this.error("decimal escape too large", this.line, this.col);
+              out += String.fromCharCode(code);
+            } else {
+              this.error(`invalid escape sequence '\\${e}'`, this.line, this.col);
+            }
+          }
+        }
+      } else {
+        out += this.advance();
+      }
+    }
+    return { text: out, line: startLine, col: startCol };
+  }
+
+  readNumber() {
+    const startLine = this.line, startCol = this.col;
+    let out = "";
+    if (this.peek() === "0" && (this.peek(1) === "x" || this.peek(1) === "X")) {
+      out += this.advance(); out += this.advance();
+      while (isHexDigit(this.peek()) || this.peek() === ".") out += this.advance();
+      if (this.peek() === "p" || this.peek() === "P") {
+        out += this.advance();
+        if (this.peek() === "+" || this.peek() === "-") out += this.advance();
+        while (isDigit(this.peek())) out += this.advance();
+      }
+    } else {
+      while (isDigit(this.peek())) out += this.advance();
+      if (this.peek() === ".") { out += this.advance(); while (isDigit(this.peek())) out += this.advance(); }
+      if (this.peek() === "e" || this.peek() === "E") {
+        out += this.advance();
+        if (this.peek() === "+" || this.peek() === "-") out += this.advance();
+        while (isDigit(this.peek())) out += this.advance();
+      }
+    }
+    // Luau allows trailing 'i' for imaginary? no. Skip.
+    return { text: out, line: startLine, col: startCol };
+  }
+
+  tokenize() {
+    while (this.i < this.len) {
+      const c = this.peek();
+      const line = this.line, col = this.col;
+
+      if (c === " " || c === "\t" || c === "\r" || c === "\n") { this.advance(); continue; }
+
+      if (c === "-" && this.peek(1) === "-") {
+        this.advance(); this.advance();
+        if (this.peek() === "[") {
+          const level = this.longBracketLevel();
+          if (level >= 0) {
+            const { text, line: cl, col: cc } = this.readLongBracket(level, true);
+            this.comments.push({ text, line: cl, col: cc, kind: "long" });
+            continue;
+          }
+        }
+        // line comment
+        let text = "";
+        while (this.i < this.len && this.peek() !== "\n") text += this.advance();
+        this.comments.push({ text, line, col, kind: "line" });
+        continue;
+      }
+
+      if (c === "[") {
+        const level = this.longBracketLevel();
+        if (level >= 0) {
+          const { text, line: sl, col: sc } = this.readLongBracket(level, false);
+          this.push("String", text, sl, sc);
+          continue;
+        }
+        this.advance(); this.push("[", "[", line, col); continue;
+      }
+
+      if (c === '"' || c === "'") {
+        const { text, line: sl, col: sc } = this.readShortString(c);
+        this.push("String", text, sl, sc);
+        continue;
+      }
+
+      // Luau string interpolation: `text {expr} text`
+      if (this.luau && c === "`") {
+        this.readInterpString(line, col);
+        continue;
+      }
+
+      if (isDigit(c) || (c === "." && isDigit(this.peek(1)))) {
+        const { text, line: nl, col: nc } = this.readNumber();
+        this.push("Number", text, nl, nc);
+        continue;
+      }
+
+      if (isAlpha(c)) {
+        let out = "";
+        while (isAlphaNum(this.peek())) out += this.advance();
+        if (KEYWORDS.has(out)) {
+          if (out === "continue" && !this.luau) {
+            // treat as identifier in non-Luau runtimes
+            this.push("Name", out, line, col);
+          } else {
+            this.push(out, out, line, col);
+          }
+        } else {
+          this.push("Name", out, line, col);
+        }
+        continue;
+      }
+
+      // operators / punctuation
+      const three = this.src.substr(this.i, 3);
+      if (three === "...") { this.i += 3; this.col += 3; this.push("...", "...", line, col); continue; }
+
+      const two = this.src.substr(this.i, 2);
+      const twoCharOps = ["==", "~=", "<=", ">=", "..", "::", "//"];
+      const luauTwoCharOps = ["+=", "-=", "*=", "/=", "%=", "^=", "->"];
+      if (this.luau && two === "..=") { /* handled by three-check below */ }
+      if (this.luau) {
+        const three2 = this.src.substr(this.i, 3);
+        if (three2 === "..=") { this.i += 3; this.col += 3; this.push("..=", "..=", line, col); continue; }
+      }
+      if (twoCharOps.includes(two)) {
+        this.i += 2; this.col += 2; this.push(two, two, line, col); continue;
+      }
+      if (this.luau && luauTwoCharOps.includes(two)) {
+        this.i += 2; this.col += 2; this.push(two, two, line, col); continue;
+      }
+
+      const single = "+-*/%^#&~|<>=(){}[];:,.";
+      if (single.includes(c)) {
+        this.advance();
+        this.push(c, c, line, col);
+        continue;
+      }
+
+      this.error(`unexpected symbol near '${c}'`, line, col);
+    }
+    this.push("EOF", "<eof>", this.line, this.col);
+    return { tokens: this.tokens, comments: this.comments };
+  }
+
+  readInterpString(line, col) {
+    // Luau interpolated string: `...{expr}...`
+    // We emit a single "InterpString" token whose value is an array of
+    // {type:'str', text} | {type:'expr', tokens:[...]} pieces (tokens re-lexed later by parser via sub-lex).
+    this.advance(); // `
+    const parts = [];
+    let cur = "";
+    while (true) {
+      if (this.i >= this.len) this.error("unfinished interpolated string", line, col);
+      const c = this.peek();
+      if (c === "`") { this.advance(); break; }
+      if (c === "\\") {
+        this.advance();
+        const e = this.advance();
+        const map = { n: "\n", t: "\t", r: "\r", "\\": "\\", "`": "`", "{": "{", "}": "}", "'": "'", '"': '"' };
+        cur += map[e] !== undefined ? map[e] : e;
+        continue;
+      }
+      if (c === "{") {
+        parts.push({ type: "str", text: cur }); cur = "";
+        this.advance();
+        // capture raw source until matching '}' respecting nested braces/strings (simplified)
+        let depth = 1; let exprSrc = "";
+        while (depth > 0) {
+          if (this.i >= this.len) this.error("unfinished interpolated expression", line, col);
+          const ch = this.peek();
+          if (ch === "{") depth++;
+          if (ch === "}") { depth--; if (depth === 0) { this.advance(); break; } }
+          exprSrc += this.advance();
+        }
+        parts.push({ type: "expr", src: exprSrc });
+        continue;
+      }
+      cur += this.advance();
+    }
+    parts.push({ type: "str", text: cur });
+    this.push("InterpString", parts, line, col);
+  }
+}
+
+
+
+class ParseError extends Error {
+  constructor(message, line, col) {
+    super(message);
+    this.line = line; this.col = col; this.name = "ParseError";
+  }
+}
+
+// Runtime feature flags
+function featuresFor(runtime) {
+  const base = {
+    bitwiseOps: false, intDiv: false, goto: false, compoundAssign: false,
+    ifExpr: false, interpString: false, typeAnnotations: false, continueStmt: false,
+    luau: false,
+  };
+  switch (runtime) {
+    case "lua51": return { ...base };
+    case "lua52": return { ...base, goto: true };
+    case "lua53": return { ...base, goto: true, bitwiseOps: true, intDiv: true };
+    case "lua54": return { ...base, goto: true, bitwiseOps: true, intDiv: true };
+    case "luajit": return { ...base, goto: true };
+    case "luau": return { ...base, goto: false, bitwiseOps: false, intDiv: true, compoundAssign: true, ifExpr: true, interpString: true, typeAnnotations: true, continueStmt: true, luau: true };
+    default: return base;
+  }
+}
+
+let scopeCounter = 0;
+class Scope {
+  constructor(parent, kind) {
+    this.parent = parent;
+    this.kind = kind; // 'function' | 'block'
+    this.id = ++scopeCounter;
+    this.names = new Map(); // name -> declNode
+  }
+  declare(name, node) { this.names.set(name, node); }
+  resolve(name) {
+    let s = this;
+    while (s) { if (s.names.has(name)) return s.names.get(name); s = s.parent; }
+    return null;
+  }
+}
+
+class Parser {
+  constructor(src, runtime) {
+    this.src = src;
+    this.runtime = runtime;
+    this.features = featuresFor(runtime);
+    const lex = new Lexer(src, { luau: this.features.luau });
+    const { tokens, comments } = lex.tokenize();
+    this.tokens = tokens;
+    this.comments = comments;
+    this.pos = 0;
+    this.globals = new Map(); // name -> {node, refs:[]}
+    this.allIdentifierRefs = []; // list of {node, declNode|null, isGlobal}
+  }
+
+  peek(o = 0) { return this.tokens[this.pos + o]; }
+  cur() { return this.tokens[this.pos]; }
+
+  error(msg, tok = this.cur()) {
+    throw new ParseError(msg, tok.line, tok.col);
+  }
+
+  check(type) { return this.cur().type === type; }
+
+  advance() { return this.tokens[this.pos++]; }
+
+  expect(type, ctx) {
+    if (this.cur().type !== type) {
+      this.error(`'${type}' expected near '${this.cur().value}'${ctx ? " (" + ctx + ")" : ""}`);
+    }
+    return this.advance();
+  }
+
+  parseChunk() {
+    this.rootScope = new Scope(null, "function");
+    this.scope = this.rootScope;
+    const body = this.parseBlock();
+    if (!this.check("EOF")) this.error(`unexpected '${this.cur().value}'`);
+    return { type: "Chunk", body, scopeId: this.rootScope.id };
+  }
+
+  blockEnd() {
+    return ["EOF", "end", "else", "elseif", "until"].includes(this.cur().type);
+  }
+
+  parseBlock(newScopeKind) {
+    let pushed = false;
+    if (newScopeKind) { this.scope = new Scope(this.scope, newScopeKind); pushed = true; }
+    const stmts = [];
+    while (!this.blockEnd()) {
+      if (this.check("return")) {
+        stmts.push(this.parseReturn());
+        break;
+      }
+      const s = this.parseStatement();
+      if (s) stmts.push(s);
+    }
+    if (pushed) this.scope = this.scope.parent;
+    return stmts;
+  }
+
+  parseReturn() {
+    const line = this.cur().line;
+    this.advance();
+    const args = [];
+    if (!this.blockEnd() && !this.check(";")) {
+      args.push(this.parseExpr());
+      while (this.check(",")) { this.advance(); args.push(this.parseExpr()); }
+    }
+    if (this.check(";")) this.advance();
+    return { type: "ReturnStatement", args, line };
+  }
+
+  parseStatement() {
+    const t = this.cur();
+    // Luau contextual keywords: 'type X = ...' and 'export type X = ...'
+    // These are compile-time-only declarations (erased at runtime), so we
+    // parse-and-discard them: dropping them cannot change program behavior,
+    // and keeping them would require carrying a full type-AST we never use.
+    if (this.features.typeAnnotations) {
+      if (t.type === "Name" && t.value === "export" && this.peek(1).type === "Name" && this.peek(1).value === "type") {
+        this.advance(); this.advance();
+        return this.parseTypeAliasRest(t.line);
+      }
+      if (t.type === "Name" && t.value === "type" && this.peek(1).type === "Name") {
+        this.advance();
+        return this.parseTypeAliasRest(t.line);
+      }
+    }
+    switch (t.type) {
+      case ";": this.advance(); return null;
+      case "if": return this.parseIf();
+      case "while": return this.parseWhile();
+      case "do": { this.advance(); const body = this.parseBlock("block"); this.expect("end"); return { type: "DoStatement", body, line: t.line }; }
+      case "for": return this.parseFor();
+      case "repeat": return this.parseRepeat();
+      case "function": return this.parseFunctionStatement();
+      case "local": return this.parseLocal();
+      case "break": this.advance(); return { type: "BreakStatement", line: t.line };
+      case "continue":
+        if (this.features.continueStmt) { this.advance(); return { type: "ContinueStatement", line: t.line }; }
+        break;
+      case "goto":
+        if (this.features.goto) { this.advance(); const name = this.expect("Name").value; return { type: "GotoStatement", label: name, line: t.line }; }
+        break;
+      case "::":
+        if (this.features.goto) { this.advance(); const name = this.expect("Name").value; this.expect("::"); return { type: "LabelStatement", name, line: t.line }; }
+        break;
+    }
+    return this.parseExprStatement();
+  }
+
+  parseIf() {
+    const line = this.cur().line;
+    this.advance();
+    const clauses = [];
+    const cond = this.parseExpr();
+    this.expect("then");
+    const body = this.parseBlock("block");
+    clauses.push({ cond, body });
+    while (this.check("elseif")) {
+      this.advance();
+      const c2 = this.parseExpr();
+      this.expect("then");
+      const b2 = this.parseBlock("block");
+      clauses.push({ cond: c2, body: b2 });
+    }
+    let elseBody = null;
+    if (this.check("else")) { this.advance(); elseBody = this.parseBlock("block"); }
+    this.expect("end");
+    return { type: "IfStatement", clauses, elseBody, line };
+  }
+
+  parseWhile() {
+    const line = this.cur().line;
+    this.advance();
+    const cond = this.parseExpr();
+    this.expect("do");
+    const body = this.parseBlock("block");
+    this.expect("end");
+    return { type: "WhileStatement", cond, body, line };
+  }
+
+  parseRepeat() {
+    const line = this.cur().line;
+    this.advance();
+    // repeat...until: the until condition can see locals declared in body, so
+    // don't pop scope until after parsing the condition.
+    this.scope = new Scope(this.scope, "block");
+    const stmts = [];
+    while (!this.blockEnd()) {
+      if (this.check("return")) { stmts.push(this.parseReturn()); break; }
+      const s = this.parseStatement();
+      if (s) stmts.push(s);
+    }
+    this.expect("until");
+    const cond = this.parseExpr();
+    this.scope = this.scope.parent;
+    return { type: "RepeatStatement", body: stmts, cond, line };
+  }
+
+  parseFor() {
+    const line = this.cur().line;
+    this.advance();
+    const firstName = this.expect("Name").value;
+    if (this.check("=")) {
+      this.advance();
+      const start = this.parseExpr();
+      this.expect(",");
+      const limit = this.parseExpr();
+      let step = null;
+      if (this.check(",")) { this.advance(); step = this.parseExpr(); }
+      this.expect("do");
+      this.scope = new Scope(this.scope, "block");
+      const varNode = { type: "Identifier", name: firstName, isDecl: true, scopeId: this.scope.id };
+      this.scope.declare(firstName, varNode);
+      const body = [];
+      while (!this.blockEnd()) {
+        if (this.check("return")) { body.push(this.parseReturn()); break; }
+        const s = this.parseStatement(); if (s) body.push(s);
+      }
+      this.expect("end");
+      this.scope = this.scope.parent;
+      return { type: "NumericForStatement", var: varNode, start, limit, step, body, line };
+    } else {
+      const names = [firstName];
+      while (this.check(",")) { this.advance(); names.push(this.expect("Name").value); }
+      this.expect("in");
+      const exprs = [this.parseExpr()];
+      while (this.check(",")) { this.advance(); exprs.push(this.parseExpr()); }
+      this.expect("do");
+      this.scope = new Scope(this.scope, "block");
+      const varNodes = names.map(n => {
+        const vn = { type: "Identifier", name: n, isDecl: true, scopeId: this.scope.id };
+        this.scope.declare(n, vn);
+        return vn;
+      });
+      const body = [];
+      while (!this.blockEnd()) {
+        if (this.check("return")) { body.push(this.parseReturn()); break; }
+        const s = this.parseStatement(); if (s) body.push(s);
+      }
+      this.expect("end");
+      this.scope = this.scope.parent;
+      return { type: "GenericForStatement", vars: varNodes, exprs, body, line };
+    }
+  }
+
+  parseFunctionStatement() {
+    const line = this.cur().line;
+    this.advance();
+    // funcname: Name {'.' Name} [':' Name]
+    let base = this.resolveOrGlobalIdentifier(this.expect("Name"));
+    let isMethod = false;
+    let path = [base];
+    while (this.check(".") || this.check(":")) {
+      const isColon = this.check(":");
+      this.advance();
+      const nameTok = this.expect("Name");
+      path.push({ type: "MemberName", name: nameTok.value });
+      if (isColon) { isMethod = true; break; }
+    }
+    const funcBody = this.parseFunctionBody(isMethod);
+    return { type: "FunctionDeclaration", target: path, isMethod, isLocal: false, func: funcBody, line };
+  }
+
+  parseLocal() {
+    const line = this.cur().line;
+    this.advance();
+    if (this.check("function")) {
+      this.advance();
+      const nameTok = this.expect("Name");
+      const declNode = { type: "Identifier", name: nameTok.value, isDecl: true, scopeId: this.scope.id, kind: "local-function" };
+      this.scope.declare(nameTok.value, declNode); // declare before body so it can recurse
+      const funcBody = this.parseFunctionBody(false);
+      return { type: "LocalFunctionDeclaration", id: declNode, func: funcBody, line };
+    }
+    const names = [];
+    const attribs = [];
+    names.push(this.expect("Name").value);
+    attribs.push(this.parseAttrib());
+    while (this.check(",")) {
+      this.advance();
+      names.push(this.expect("Name").value);
+      attribs.push(this.parseAttrib());
+    }
+    let inits = [];
+    if (this.check("=")) {
+      this.advance();
+      inits.push(this.parseExpr());
+      while (this.check(",")) { this.advance(); inits.push(this.parseExpr()); }
+    }
+    // declare AFTER parsing initializers (correct Lua scoping)
+    const idNodes = names.map((n, idx) => {
+      const node = { type: "Identifier", name: n, isDecl: true, scopeId: this.scope.id, attrib: attribs[idx] };
+      this.scope.declare(n, node);
+      return node;
+    });
+    return { type: "LocalStatement", names: idNodes, init: inits, line };
+  }
+
+  parseAttrib() {
+    // Luau/5.4 attributes: <const> <close> ; and Luau type annotation ': Type'
+    if (this.check("<")) {
+      this.advance();
+      const name = this.expect("Name").value;
+      this.expect(">");
+      return name;
+    }
+    if (this.features.typeAnnotations && this.check(":")) {
+      this.advance();
+      this.skipTypeAnnotation();
+    }
+    return null;
+  }
+
+  // Statement-starting keywords that can never appear inside a type
+  // expression at bracket depth 0 — used as a stop set for the best-effort
+  // type skipper below (covers both parameter/':'-annotations, which also
+  // stop at ',' '=' ')', and return-type annotations, which are followed
+  // directly by the function's statement block).
+  static get TYPE_STOP_KEYWORDS() {
+    return new Set(["end", "do", "then", "if", "while", "for", "local", "function",
+      "return", "repeat", "break", "continue", "goto", "until", "else", "elseif", "EOF"]);
+  }
+
+  skipTypeAnnotation() {
+    // Best-effort: consume a type expression until a delimiter or a
+    // statement-starting keyword is reached at bracket depth 0. We don't
+    // build a full type AST; types are structurally irrelevant to
+    // obfuscation of runtime values, so discarding them is semantics-safe.
+    let depth = 0;
+    while (true) {
+      const t = this.cur();
+      if (t.type === "EOF") this.error("malformed type annotation");
+      if (depth === 0 && ([",", "=", ")"].includes(t.type) || Parser.TYPE_STOP_KEYWORDS.has(t.type))) return;
+      if (["(", "{", "<"].includes(t.type)) depth++;
+      if ([")", "}", ">"].includes(t.type)) { if (depth === 0) return; depth--; }
+      this.advance();
+    }
+  }
+
+  parseTypeAliasRest(startLine) {
+    this.expect("Name"); // alias name already consumed by caller position check; consumes it here
+    if (this.check("<")) {
+      // generic parameter list: <T, U...>
+      let depth = 0;
+      do {
+        const t2 = this.advance();
+        if (t2.type === "<") depth++;
+        if (t2.type === ">") depth--;
+      } while (depth > 0);
+    }
+    this.expect("=");
+    this.skipTypeExprStatementLevel(startLine);
+    return { type: "TypeAliasStatement", line: startLine };
+  }
+
+  skipTypeExprStatementLevel(startLine) {
+    // Consume tokens making up a (possibly multi-line) type expression until
+    // we reach the true end of the statement: bracket/brace/paren/generic
+    // depth back to 0 AND the next token starts a new line beyond the type's
+    // own extent, or we hit a token that can only begin a new statement.
+    let depth = 0;
+    let lastLine = startLine;
+    while (true) {
+      const t = this.cur();
+      if (t.type === "EOF") this.error("malformed type alias");
+      if (depth === 0) {
+        // A statement/block boundary keyword at depth 0 always ends the type.
+        if (["end", "else", "elseif", "until", "EOF"].includes(t.type)) return;
+        // Heuristic: once we've moved to a strictly later line than the last
+        // consumed token AND we're not still inside brackets, the type is done.
+        if (t.line > lastLine) return;
+      }
+      if (["(", "{", "["].includes(t.type)) depth++;
+      if ([")", "}", "]"].includes(t.type)) depth--;
+      if (t.type === "<") depth++;
+      if (t.type === ">") { if (depth > 0) depth--; }
+      lastLine = t.line;
+      this.advance();
+    }
+  }
+
+  parseFunctionBody(isMethod) {
+    const line = this.cur().line;
+    this.expect("(");
+    this.scope = new Scope(this.scope, "function");
+    const params = [];
+    let vararg = false;
+    if (isMethod) {
+      const selfNode = { type: "Identifier", name: "self", isDecl: true, scopeId: this.scope.id, implicit: true };
+      this.scope.declare("self", selfNode);
+      params.push(selfNode);
+    }
+    if (!this.check(")")) {
+      do {
+        if (this.check("...")) { this.advance(); vararg = true; break; }
+        const nameTok = this.expect("Name");
+        if (this.features.typeAnnotations && this.check(":")) { this.advance(); this.skipTypeAnnotation(); }
+        const pn = { type: "Identifier", name: nameTok.value, isDecl: true, scopeId: this.scope.id };
+        this.scope.declare(nameTok.value, pn);
+        params.push(pn);
+      } while (this.check(",") && this.advance());
+    }
+    this.expect(")");
+    // Luau return type annotation: ): Type
+    if (this.features.typeAnnotations && this.check(":")) { this.advance(); this.skipTypeAnnotation(); }
+    const body = this.parseBlock(); // scope already pushed
+    this.expect("end");
+    this.scope = this.scope.parent;
+    return { type: "FunctionExpression", params, vararg, body, line };
+  }
+
+  parseExprStatement() {
+    const line = this.cur().line;
+    const first = this.parseSuffixedExpr();
+    if (this.check("=") || this.check(",")) {
+      const targets = [first];
+      while (this.check(",")) { this.advance(); targets.push(this.parseSuffixedExpr()); }
+      this.expect("=");
+      const values = [this.parseExpr()];
+      while (this.check(",")) { this.advance(); values.push(this.parseExpr()); }
+      for (const tg of targets) {
+        if (tg.type !== "Identifier" && tg.type !== "MemberExpression" && tg.type !== "IndexExpression")
+          this.error("syntax error (cannot assign to this expression)");
+      }
+      return { type: "AssignmentStatement", targets, values, line };
+    }
+    if (this.features.compoundAssign && ["+=", "-=", "*=", "/=", "%=", "^=", "..="].includes(this.cur().type)) {
+      const op = this.advance().type;
+      const value = this.parseExpr();
+      return { type: "CompoundAssignStatement", target: first, op, value, line };
+    }
+    if (first.type !== "CallExpression" && first.type !== "MethodCallExpression") {
+      this.error("syntax error (expression is not a statement)");
+    }
+    return { type: "CallStatement", expr: first, line };
+  }
+
+  resolveOrGlobalIdentifier(tok) {
+    const decl = this.scope.resolve(tok.value);
+    const node = { type: "Identifier", name: tok.value, isDecl: false, line: tok.line, col: tok.col };
+    if (decl) node.decl = decl; else node.global = true;
+    this.allIdentifierRefs.push(node);
+    return node;
+  }
+
+  // ---------- expressions (precedence climbing) ----------
+  parseExpr() { return this.parseOr(); }
+
+  parseOr() {
+    let left = this.parseAnd();
+    while (this.check("or")) { this.advance(); const right = this.parseAnd(); left = { type: "LogicalExpression", op: "or", left, right }; }
+    return left;
+  }
+  parseAnd() {
+    let left = this.parseCompare();
+    while (this.check("and")) { this.advance(); const right = this.parseCompare(); left = { type: "LogicalExpression", op: "and", left, right }; }
+    return left;
+  }
+  parseCompare() {
+    let left = this.parseBitOr();
+    while (["<", ">", "<=", ">=", "~=", "=="].includes(this.cur().type)) {
+      const op = this.advance().type; const right = this.parseBitOr();
+      left = { type: "BinaryExpression", op, left, right };
+    }
+    return left;
+  }
+  parseBitOr() {
+    let left = this.parseBitXor();
+    while (this.features.bitwiseOps && this.check("|")) { this.advance(); const right = this.parseBitXor(); left = { type: "BinaryExpression", op: "|", left, right }; }
+    return left;
+  }
+  parseBitXor() {
+    let left = this.parseBitAnd();
+    while (this.features.bitwiseOps && this.check("~")) { this.advance(); const right = this.parseBitAnd(); left = { type: "BinaryExpression", op: "~", left, right }; }
+    return left;
+  }
+  parseBitAnd() {
+    let left = this.parseShift();
+    while (this.features.bitwiseOps && this.check("&")) { this.advance(); const right = this.parseShift(); left = { type: "BinaryExpression", op: "&", left, right }; }
+    return left;
+  }
+  parseShift() {
+    // Lua doesn't have << >> tokens distinct from relational in our lexer set;
+    // 5.3/5.4 use << and >> — add if present as two-char via lexer? We didn't
+    // tokenize them specially; treat as unsupported (rare in practice) and
+    // fall through to concat level.
+    return this.parseConcat();
+  }
+  parseConcat() {
+    let left = this.parseAdd();
+    if (this.check("..")) { this.advance(); const right = this.parseConcat(); return { type: "BinaryExpression", op: "..", left, right }; }
+    return left;
+  }
+  parseAdd() {
+    let left = this.parseMul();
+    while (this.check("+") || this.check("-")) { const op = this.advance().type; const right = this.parseMul(); left = { type: "BinaryExpression", op, left, right }; }
+    return left;
+  }
+  parseMul() {
+    let left = this.parseUnary();
+    while (["*", "/", "%", "//"].includes(this.cur().type)) {
+      if (this.cur().type === "//" && !this.features.intDiv) break;
+      const op = this.advance().type; const right = this.parseUnary();
+      left = { type: "BinaryExpression", op, left, right };
+    }
+    return left;
+  }
+  parseUnary() {
+    if (["not", "-", "#"].includes(this.cur().type) || (this.features.bitwiseOps && this.cur().type === "~")) {
+      const op = this.advance().type;
+      const arg = this.parseUnary();
+      return { type: "UnaryExpression", op, arg };
+    }
+    return this.parsePow();
+  }
+  parsePow() {
+    let left = this.parsePrimaryExpr();
+    if (this.check("^")) { this.advance(); const right = this.parseUnary(); return { type: "BinaryExpression", op: "^", left, right }; }
+    return left;
+  }
+
+  parsePrimaryExpr() {
+    const t = this.cur();
+    switch (t.type) {
+      case "Number": this.advance(); return { type: "NumberLiteral", raw: t.value };
+      case "String": this.advance(); return { type: "StringLiteral", value: t.value };
+      case "InterpString": this.advance(); return this.buildInterp(t.value);
+      case "nil": this.advance(); return { type: "NilLiteral" };
+      case "true": this.advance(); return { type: "BooleanLiteral", value: true };
+      case "false": this.advance(); return { type: "BooleanLiteral", value: false };
+      case "...": this.advance(); return { type: "VarargExpression" };
+      case "function": this.advance(); return this.parseFunctionBody(false);
+      case "{": return this.parseTableConstructor();
+      case "if":
+        if (this.features.ifExpr) return this.parseIfExpr();
+        break;
+    }
+    return this.parseSuffixedExpr();
+  }
+
+  buildInterp(parts) {
+    const pieces = parts.map(p => {
+      if (p.type === "str") return { type: "str", text: p.text };
+      const subParser = new Parser(p.src, this.runtime);
+      subParser.scope = this.scope; // share enclosing scope for name resolution
+      subParser.rootScope = this.rootScope;
+      const expr = subParser.parseExpr();
+      // merge identifier refs discovered in sub-expression
+      this.allIdentifierRefs.push(...subParser.allIdentifierRefs);
+      return { type: "expr", expr };
+    });
+    return { type: "InterpolatedString", parts: pieces };
+  }
+
+  parseIfExpr() {
+    this.advance(); // if
+    const cond = this.parseExpr();
+    this.expect("then");
+    const cons = this.parseExpr();
+    const elifs = [];
+    while (this.check("elseif")) {
+      this.advance();
+      const c2 = this.parseExpr();
+      this.expect("then");
+      const b2 = this.parseExpr();
+      elifs.push({ cond: c2, expr: b2 });
+    }
+    this.expect("else");
+    const alt = this.parseExpr();
+    return { type: "IfExpression", cond, cons, elifs, alt };
+  }
+
+  parsePrimaryAtom() {
+    const t = this.cur();
+    if (t.type === "(") {
+      this.advance();
+      const e = this.parseExpr();
+      this.expect(")");
+      return { type: "ParenExpression", expr: e };
+    }
+    if (t.type === "Name") {
+      this.advance();
+      return this.resolveOrGlobalIdentifier(t);
+    }
+    this.error(`unexpected symbol near '${t.value}'`);
+  }
+
+  parseSuffixedExpr() {
+    let expr = this.parsePrimaryAtom();
+    while (true) {
+      const t = this.cur();
+      if (t.type === ".") {
+        this.advance();
+        const nameTok = this.expect("Name");
+        expr = { type: "MemberExpression", object: expr, property: nameTok.value };
+      } else if (t.type === "[") {
+        this.advance();
+        const idx = this.parseExpr();
+        this.expect("]");
+        expr = { type: "IndexExpression", object: expr, index: idx };
+      } else if (t.type === ":") {
+        this.advance();
+        const nameTok = this.expect("Name");
+        const args = this.parseCallArgs();
+        expr = { type: "MethodCallExpression", object: expr, method: nameTok.value, args };
+      } else if (t.type === "(" || t.type === "String" || t.type === "InterpString" || t.type === "{") {
+        const args = this.parseCallArgs();
+        expr = { type: "CallExpression", callee: expr, args };
+      } else break;
+    }
+    return expr;
+  }
+
+  parseCallArgs() {
+    const t = this.cur();
+    if (t.type === "(") {
+      this.advance();
+      const args = [];
+      if (!this.check(")")) {
+        args.push(this.parseExpr());
+        while (this.check(",")) { this.advance(); args.push(this.parseExpr()); }
+      }
+      this.expect(")");
+      return args;
+    }
+    if (t.type === "String") { this.advance(); return [{ type: "StringLiteral", value: t.value }]; }
+    if (t.type === "InterpString") { this.advance(); return [this.buildInterp(t.value)]; }
+    if (t.type === "{") { return [this.parseTableConstructor()]; }
+    this.error("function arguments expected");
+  }
+
+  parseTableConstructor() {
+    this.expect("{");
+    const fields = [];
+    while (!this.check("}")) {
+      if (this.check("[")) {
+        this.advance();
+        const key = this.parseExpr();
+        this.expect("]");
+        this.expect("=");
+        const value = this.parseExpr();
+        fields.push({ type: "IndexedField", key, value });
+      } else if (this.check("Name") && this.peek(1).type === "=") {
+        const nameTok = this.advance();
+        this.advance(); // '='
+        const value = this.parseExpr();
+        fields.push({ type: "NamedField", name: nameTok.value, value });
+      } else {
+        const value = this.parseExpr();
+        fields.push({ type: "ItemField", value });
+      }
+      if (this.check(",") || this.check(";")) this.advance();
+      else break;
+    }
+    this.expect("}");
+    return { type: "TableExpression", fields };
+  }
+}
+
+
+
+// Reserved/API names that must never be renamed even if they resolve as
+// locals is not an issue (locals are safe by construction since they're
+// scope-declared) — this list matters for making sure our renamer never
+// *emits* a generated name that collides with a keyword, and for the
+// "protected globals" concept used only for documentation purposes (we never
+// rename globals at all, see below).
+const LUA_KEYWORDS = new Set(["and","break","do","else","elseif","end","false","for","function",
+  "goto","if","in","local","nil","not","or","repeat","return","then","true","until","while"]);
+
+function baseName(idx) {
+  // Generate short identifier names: a, b, ... z, aa, ab, ...
+  const letters = "abcdefghijklmnopqrstuvwxyz";
+  let n = idx, out = "";
+  do {
+    out = letters[n % 26] + out;
+    n = Math.floor(n / 26) - 1;
+  } while (n >= 0);
+  return out;
+}
+
+class IdentifierRenamer {
+  constructor(prefix = "") {
+    this.map = new Map(); // scopeId::name -> generated
+    this.used = new Set();
+    this.counter = 0;
+    this.prefix = prefix;
+  }
+  nameFor(scopeId, name) {
+    const key = scopeId + "::" + name;
+    if (this.map.has(key)) return this.map.get(key);
+    let candidate;
+    do {
+      candidate = this.prefix + baseName(this.counter++);
+    } while (LUA_KEYWORDS.has(candidate) || this.used.has(candidate));
+    this.used.add(candidate);
+    this.map.set(key, candidate);
+    return candidate;
+  }
+}
+
+class CodeGenerator {
+  constructor(opts) {
+    this.opts = opts; // {runtime, minify, renameIdentifiers, stringObfuscation, removeComments,
+                       //  controlFlow, deadCode, seed, level, vmProtection, watermark}
+    this.renamer = opts.renameIdentifiers ? new IdentifierRenamer() : null;
+    this.rand = mulberry32(opts.seed >>> 0);
+    this.deadCodeCounter = 0;
+    this.warnings = [];
+    // VM runtime name: long + randomized so it can never collide with the
+    // short a/b/c... names the identifier renamer hands out, and is
+    // vanishingly unlikely to collide with any real global. Only emitted
+    // into the output if something actually ends up using it.
+    this.vmVarName = "__opq_vm_" + this.randomHex(6);
+    this.vmUsed = false;
+  }
+
+  randomHex(len) {
+    let out = "";
+    const digits = "0123456789abcdef";
+    for (let i = 0; i < len; i++) out += digits[Math.floor(this.rand() * 16)];
+    return out;
+  }
+
+  // ---- helpers ----
+  identName(node) {
+    if (!this.renamer) return node.name;
+    if (node.global) return node.name; // never rename globals/unresolved refs
+    if (node.implicit) return node.name; // 'self'
+    const decl = node.isDecl ? node : node.decl;
+    if (!decl) return node.name;
+    return this.renamer.nameFor(decl.scopeId, decl.name);
+  }
+
+  quoteString(raw) {
+    // raw is the *decoded* string value (actual bytes/characters).
+    if (this.opts.stringObfuscation) {
+      return this.obfuscateString(raw);
+    }
+    return this.plainQuote(raw);
+  }
+
+  plainQuote(raw) {
+    let out = '"';
+    for (const ch of raw) {
+      const code = ch.codePointAt(0);
+      if (ch === '"') out += '\\"';
+      else if (ch === "\\") out += "\\\\";
+      else if (ch === "\n") out += "\\n";
+      else if (ch === "\r") out += "\\r";
+      else if (code < 32) out += "\\" + code;
+      else out += ch;
+    }
+    return out + '"';
+  }
+
+  obfuscateString(raw) {
+    const bytes = new TextEncoder().encode(raw);
+    if (bytes.length === 0) return '""';
+    const nums = Array.from(bytes.values());
+    const CHUNK = 40;
+    const chunks = [];
+    for (let i = 0; i < nums.length; i += CHUNK) {
+      chunks.push(nums.slice(i, i + CHUNK));
+    }
+    const pieces = this.opts.vmProtection
+      ? chunks.map(c => this.vmEncodeChunk(c))
+      : chunks.map(c => this.inlineEncodeChunk(c));
+    return pieces.length === 1 ? pieces[0] : `(${pieces.join("..")})`;
+  }
+
+  // Plain inline form: string.char((n1+k1)-k1, (n2+k2)-k2, ...) — visible
+  // arithmetic right in the call, cheap and universally compatible. Chunked
+  // to at most 40 bytes per call: a single string.char(...) with one
+  // argument per byte is unsafe for long strings — real Lua/Luau
+  // implementations impose limits on the number of arguments/registers a
+  // single call can use, and a call with hundreds of arguments (easy to hit
+  // with any paragraph of UI copy) can fail to compile even though it looks
+  // fine to a lenient parser.
+  inlineEncodeChunk(byteChunk) {
+    const parts = byteChunk.map(n => {
+      const k = 1 + Math.floor(this.rand() * 40);
+      return `${n + k}-${k}`;
+    });
+    return `string.char(${parts.join(",")})`;
+  }
+
+  // VM form: the same byte values, but instead of arithmetic visible in the
+  // call site, each chunk becomes a small flat bytecode program executed by
+  // a tiny stack-machine interpreter (this.vmVarName) injected once at the
+  // top of the file. This only ever touches self-contained literal values —
+  // it never rewrites control flow, scoping, or anything that references
+  // the user's own variables — so it cannot change what the script does,
+  // only how its string constants are reconstructed at runtime.
+  //   Opcodes: 1=PUSH <k>   2=SUB (a,b -> a-b)   3=CHR (n -> string.char(n))
+  //            4=CONCAT (a,b -> a..b)   0=RETURN top of stack
+  vmEncodeChunk(byteChunk) {
+    this.vmUsed = true;
+    const prog = [];
+    byteChunk.forEach(n => {
+      const k = 1 + Math.floor(this.rand() * 40);
+      prog.push(1, n + k, 1, k, 2, 3); // PUSH masked, PUSH k, SUB, CHR
+    });
+    for (let i = 1; i < byteChunk.length; i++) prog.push(4); // CONCAT (len-1 times)
+    prog.push(0); // RETURN
+    return `${this.vmVarName}({${prog.join(",")}})`;
+  }
+
+  vmRuntimeSource() {
+    // Deliberately tiny and self-contained: only reads its own `p` argument
+    // and the global `string` library. No upvalues into user code, so it
+    // can be dropped in anywhere without risk of capturing/shadowing
+    // anything from the surrounding script.
+    const v = this.vmVarName;
+    if (this.opts.minify) {
+      return `local function ${v}(p) local s={} local n=0 local i=1 while true do local op=p[i] if op==1 then n=n+1 s[n]=p[i+1] i=i+2 elseif op==2 then s[n-1]=s[n-1]-s[n] n=n-1 i=i+1 elseif op==3 then s[n]=string.char(s[n]) i=i+1 elseif op==4 then s[n-1]=s[n-1]..s[n] n=n-1 i=i+1 else return s[n] end end end`;
+    }
+    return [
+      `local function ${v}(p)`,
+      `  -- Tiny bytecode interpreter used to reconstruct obfuscated string constants.`,
+      `  -- 1=push k, 2=subtract, 3=byte->char, 4=concat, else=return top of stack.`,
+      `  local s = {}`,
+      `  local n = 0`,
+      `  local i = 1`,
+      `  while true do`,
+      `    local op = p[i]`,
+      `    if op == 1 then`,
+      `      n = n + 1`,
+      `      s[n] = p[i + 1]`,
+      `      i = i + 2`,
+      `    elseif op == 2 then`,
+      `      s[n - 1] = s[n - 1] - s[n]`,
+      `      n = n - 1`,
+      `      i = i + 1`,
+      `    elseif op == 3 then`,
+      `      s[n] = string.char(s[n])`,
+      `      i = i + 1`,
+      `    elseif op == 4 then`,
+      `      s[n - 1] = s[n - 1] .. s[n]`,
+      `      n = n - 1`,
+      `      i = i + 1`,
+      `    else`,
+      `      return s[n]`,
+      `    end`,
+      `  end`,
+      `end`,
+    ].join("\n");
+  }
+
+  numberLiteral(raw) {
+    if (!this.opts.constantTransform) return raw;
+    // Only transform simple decimal integers safely (avoid touching hex/float/exp forms).
+    if (!/^[0-9]+$/.test(raw)) return raw;
+    const n = parseInt(raw, 10);
+    if (n > 1e6 || n === 0) return raw; // keep small & safe
+    const k = 1 + Math.floor(this.rand() * (n + 1));
+    return `(${n + k}-${k})`;
+  }
+
+  sp() { return this.opts.minify ? "" : " "; }
+  // nl(): separates statements within a block. In minified mode we still need
+  // *some* separator between adjacent statements (otherwise e.g. "end" and a
+  // following "local" glue into the single identifier "endlocal"). ';' is a
+  // valid empty-statement separator in Lua, so we use it instead of removing
+  // the boundary entirely.
+  // nl(): separates statements within a block. In minified mode we use a
+  // plain space rather than ';' — a space is *always* a valid boundary
+  // between two Lua/Luau statements (same as a newline would be), with zero
+  // ambiguity about whether a bare ';' counts as its own statement. Some
+  // real-world Lua/Luau parsers are stricter about that than others, so
+  // this sidesteps the question entirely instead of relying on it.
+  nl() { return this.opts.minify ? " " : "\n"; }
+  // kw(): a separator that MUST be a real space because it sits between a
+  // keyword and the expression/name that follows it (e.g. "return x",
+  // "then y", "do z"). ';' cannot be used here since that would change
+  // meaning (or be a syntax error), and omitting it would glue two
+  // alphanumeric tokens into one identifier. This is never minified away.
+  kw() { return " "; }
+  indent(depth) { return this.opts.minify ? "" : "  ".repeat(depth); }
+
+  maybeOpaqueWrap(bodyStr, depth) {
+    // Real, safe control-flow obfuscation: wrap a block in a single-iteration
+    // loop with an opaque (always-true) predicate, so execution still runs
+    // the block exactly once, in order, then continues after it — but static
+    // readers see an extra loop/branch layer.
+    if (!this.opts.controlFlow) return bodyStr;
+    const a = 1 + Math.floor(this.rand() * 9);
+    const b = 1 + Math.floor(this.rand() * 9);
+    const pred = `(${a}*${a})>=${a > 0 ? 0 : 1}`; // trivially true, still an expression
+    const openBrace = this.opts.minify ? "" : "";
+    return `while ${pred} do${this.nl()}${bodyStr}${this.nl()}${this.indent(depth)}break${this.nl()}${this.indent(depth)}end`;
+  }
+
+  maybeDeadCode(depth) {
+    if (!this.opts.deadCode) return "";
+    this.deadCodeCounter++;
+    const name = `_dc${this.deadCodeCounter}_${Math.floor(this.rand() * 1000)}`;
+    // NOTE: no trailing separator here — the caller (genBlock) joins all
+    // lines together with this.nl() itself. Adding one here too used to
+    // produce a doubled-up ";;" in minified output: harmless to *our* own
+    // (lenient) parser, but a bare empty statement is exactly the kind of
+    // construct a stricter real-world Lua/Luau parser can reject outright.
+    return `${this.indent(depth)}local ${name}${this.sp()}=${this.sp()}${Math.floor(this.rand()*1000)}`;
+  }
+
+  // ---- comments (best-effort re-attachment by source line) ----
+  leadingCommentsFor(line, comments, consumed) {
+    if (this.opts.removeComments || !comments) return "";
+    const out = [];
+    for (const c of comments) {
+      if (consumed.has(c)) continue;
+      if (c.line <= line) {
+        out.push(c.kind === "line" ? `--${c.text}` : `--[[${c.text}]]`);
+        consumed.add(c);
+      }
+    }
+    // Comments always need a real newline after them (a '--' line comment
+    // consumes everything up to the next line break, so without one the
+    // following code would be swallowed into the comment). No trailing
+    // separator beyond that — the caller supplies the join between this
+    // block and whatever comes next.
+    return out.length ? out.join("\n") + "\n" : "";
+  }
+
+  generate(chunk, comments) {
+    const consumed = new Set();
+    const body = this.genBlock(chunk.body, 0, comments, consumed);
+    let leftover = "";
+    if (!this.opts.removeComments && comments) {
+      for (const c of comments) {
+        if (!consumed.has(c)) leftover += (c.kind === "line" ? `--${c.text}` : `--[[${c.text}]]`) + "\n";
+      }
+    }
+    let out = (leftover ? leftover : "") + body;
+
+    // VM runtime: only prepended if a transformation actually emitted a call
+    // to it (this.vmUsed), and always as plain, readable Lua — the VM itself
+    // is never obfuscated, so anyone can audit exactly what it does.
+    if (this.vmUsed) {
+      out = this.vmRuntimeSource() + (this.opts.minify ? " " : "\n\n") + out;
+    }
+
+    // Watermark: a small, honest, human-readable comment header — never
+    // hidden, never carrying tracking data beyond what's printed here. It
+    // has zero runtime effect (it's a Lua comment) and is meant purely as a
+    // visible "this file was processed by OPAQUE" marker, not a covert
+    // fingerprint. Can be turned off entirely via opts.watermark = false.
+    if (this.opts.watermark !== false) {
+      out = this.watermarkHeader() + out;
+    }
+    return out;
+  }
+
+  watermarkHeader() {
+    const runId = this.randomHex(8);
+    const when = (this.opts.generatedAt || new Date()).toISOString();
+    const lines = [
+      `-- Obfuscated with OPAQUE (client-side Lua/Luau obfuscator)`,
+      `-- Level: ${this.opts.level || "custom"}  Runtime: ${this.opts.runtime}  Run: ${runId}  Generated: ${when}`,
+      `-- This is a visible marker only — it has no effect on the script and carries no hidden tracking.`,
+    ];
+    return lines.join("\n") + "\n";
+  }
+
+  genBlock(stmts, depth, comments, consumed) {
+    const lines = [];
+    for (const s of stmts) {
+      const lead = comments ? this.leadingCommentsFor(s.line || 0, comments, consumed) : "";
+      const code = this.genStatement(s, depth);
+      if (this.opts.deadCode && this.rand() < 0.15) {
+        const dc = this.maybeDeadCode(depth);
+        if (dc) lines.push(dc);
+      }
+      if (code !== "") {
+        // Any leading comment is glued directly onto the SAME entry as the
+        // statement it precedes (with a real newline in between), rather
+        // than pushed as its own separate array item. That guarantees the
+        // block-level join separator (this.nl(), ';' when minified) only
+        // ever sits between two complete statements — never right after a
+        // bare comment with nothing else before it, which would otherwise
+        // produce an orphan ';' with no preceding statement to terminate.
+        lines.push(lead + this.indent(depth) + code);
+      } else if (lead) {
+        // Rare edge case: a statement that erases to nothing (currently
+        // only Luau's `type X = ...` alias) but still had comments above
+        // it. Nothing to attach them to, so they stand alone.
+        lines.push(lead.replace(/\n$/, ""));
+      }
+    }
+    return lines.join(this.nl());
+  }
+
+  genStatement(s, depth) {
+    switch (s.type) {
+      case "LocalStatement": {
+        const names = s.names.map(n => this.identName(n)).join(",");
+        const attribs = s.names.map(n => n.attrib ? `<${n.attrib}>` : "").join("");
+        const init = s.init.length ? `${this.sp()}=${this.sp()}${s.init.map(e => this.genExpr(e)).join(",")}` : "";
+        return `local ${names}${init}`;
+      }
+      case "LocalFunctionDeclaration": {
+        const name = this.identName(s.id);
+        return `local function ${name}${this.genFunctionRest(s.func, depth)}`;
+      }
+      case "FunctionDeclaration": {
+        const path = s.target.map((p, i) => i === 0 ? this.identName(p) : (p.name)).join(s.isMethod ? "." : ".");
+        // rebuild path correctly considering ':' for method
+        let str = this.identName(s.target[0]);
+        for (let i = 1; i < s.target.length; i++) {
+          const isLast = i === s.target.length - 1;
+          str += (s.isMethod && isLast ? ":" : ".") + s.target[i].name;
+        }
+        return `function ${str}${this.genFunctionRest(s.func, depth)}`;
+      }
+      case "AssignmentStatement": {
+        const t = s.targets.map(e => this.genExpr(e)).join(",");
+        const v = s.values.map(e => this.genExpr(e)).join(",");
+        return `${t}${this.sp()}=${this.sp()}${v}`;
+      }
+      case "CompoundAssignStatement": {
+        return `${this.genExpr(s.target)}${this.sp()}${s.op}${this.sp()}${this.genExpr(s.value)}`;
+      }
+      case "CallStatement": return this.genExpr(s.expr);
+      case "DoStatement": {
+        const inner = this.genBlock(s.body, depth + 1, null, new Set());
+        const wrapped = this.opts.controlFlow ? this.maybeOpaqueWrap(inner, depth + 1) : inner;
+        return `do${this.kw()}${wrapped}${this.nl()}${this.indent(depth)}end`;
+      }
+      case "IfStatement": {
+        let out = "";
+        s.clauses.forEach((c, i) => {
+          const kwd = i === 0 ? "if" : "elseif";
+          out += `${kwd} ${this.genExpr(c.cond)} then${this.kw()}${this.genBlock(c.body, depth + 1, null, new Set())}${this.nl()}${this.indent(depth)}`;
+        });
+        if (s.elseBody) out += `else${this.kw()}${this.genBlock(s.elseBody, depth + 1, null, new Set())}${this.nl()}${this.indent(depth)}`;
+        out += "end";
+        return out;
+      }
+      case "WhileStatement": {
+        const inner = this.genBlock(s.body, depth + 1, null, new Set());
+        return `while ${this.genExpr(s.cond)} do${this.kw()}${inner}${this.nl()}${this.indent(depth)}end`;
+      }
+      case "RepeatStatement": {
+        const inner = this.genBlock(s.body, depth + 1, null, new Set());
+        return `repeat${this.kw()}${inner}${this.nl()}${this.indent(depth)}until ${this.genExpr(s.cond)}`;
+      }
+      case "NumericForStatement": {
+        const v = this.identName(s.var);
+        const parts = [this.genExpr(s.start), this.genExpr(s.limit)];
+        if (s.step) parts.push(this.genExpr(s.step));
+        const inner = this.genBlock(s.body, depth + 1, null, new Set());
+        return `for ${v}${this.sp()}=${this.sp()}${parts.join(",")} do${this.kw()}${inner}${this.nl()}${this.indent(depth)}end`;
+      }
+      case "GenericForStatement": {
+        const vs = s.vars.map(v => this.identName(v)).join(",");
+        const exprs = s.exprs.map(e => this.genExpr(e)).join(",");
+        const inner = this.genBlock(s.body, depth + 1, null, new Set());
+        return `for ${vs} in ${exprs} do${this.kw()}${inner}${this.nl()}${this.indent(depth)}end`;
+      }
+      case "ReturnStatement":
+        return `return${s.args.length ? this.kw() + s.args.map(e => this.genExpr(e)).join(",") : ""}`;
+      case "BreakStatement": return "break";
+      case "ContinueStatement": return "continue";
+      case "GotoStatement": return `goto ${s.label}`;
+      case "LabelStatement": return `::${s.name}::`;
+      case "TypeAliasStatement": return ""; // erased: compile-time-only, no runtime effect
+      default:
+        throw new Error("Unknown statement type: " + s.type);
+    }
+  }
+
+  genFunctionRest(func, depth) {
+    const params = func.params.filter(p => !p.implicit).map(p => this.identName(p));
+    if (func.vararg) params.push("...");
+    const inner = this.genBlock(func.body, depth + 1, null, new Set());
+    return `(${params.join(",")})${this.nl()}${inner}${this.nl()}${this.indent(depth)}end`;
+  }
+
+  genExpr(e) {
+    switch (e.type) {
+      case "NumberLiteral": return this.numberLiteral(e.raw);
+      case "StringLiteral": return this.quoteString(e.value);
+      case "InterpolatedString": {
+        // Re-emit as plain concatenation (portable across all runtimes and
+        // still exactly equivalent), rather than requiring Luau syntax —
+        // this also means interpolated strings work even if downstream
+        // tooling doesn't special-case backtick strings.
+        const pieces = e.parts.map(p => p.type === "str" ? this.quoteString(p.text) : `tostring(${this.genExpr(p.expr)})`);
+        return pieces.length ? pieces.join("..") : '""';
+      }
+      case "NilLiteral": return "nil";
+      case "BooleanLiteral": {
+        if (this.opts.constantTransform) {
+          return e.value ? "(1==1)" : "(1==2)";
+        }
+        return e.value ? "true" : "false";
+      }
+      case "VarargExpression": return "...";
+      case "Identifier": return this.identName(e);
+      case "ParenExpression": return `(${this.genExpr(e.expr)})`;
+      case "MemberExpression": return `${this.genAtom(e.object)}.${e.property}`;
+      case "IndexExpression": return `${this.genAtom(e.object)}[${this.genExpr(e.index)}]`;
+      case "CallExpression": return `${this.genAtom(e.callee)}(${e.args.map(a => this.genExpr(a)).join(",")})`;
+      case "MethodCallExpression": return `${this.genAtom(e.object)}:${e.method}(${e.args.map(a => this.genExpr(a)).join(",")})`;
+      case "FunctionExpression": return `function${this.genFunctionRest(e, 0)}`;
+      case "TableExpression": {
+        const fs = e.fields.map(f => {
+          if (f.type === "NamedField") return `${f.name}${this.sp()}=${this.sp()}${this.genExpr(f.value)}`;
+          if (f.type === "IndexedField") return `[${this.genExpr(f.key)}]${this.sp()}=${this.sp()}${this.genExpr(f.value)}`;
+          return this.genExpr(f.value);
+        });
+        return `{${fs.join(",")}}`;
+      }
+      case "LogicalExpression": return `${this.genExpr(e.left)} ${e.op} ${this.genExpr(e.right)}`; // 'and'/'or' are alnum keywords: space is mandatory, not just cosmetic
+      case "BinaryExpression": return `${this.genExpr(e.left)}${this.sp()}${e.op}${this.sp()}${this.genExpr(e.right)}`;
+      case "UnaryExpression": return `${e.op}${e.op === "not" ? " " : ""}${this.genExpr(e.arg)}`;
+      case "IfExpression": {
+        let out = `if ${this.genExpr(e.cond)} then ${this.genExpr(e.cons)} `;
+        for (const el of e.elifs) out += `elseif ${this.genExpr(el.cond)} then ${this.genExpr(el.expr)} `;
+        out += `else ${this.genExpr(e.alt)}`;
+        return out; // Luau if-expression syntax has no 'end'
+      }
+      default:
+        throw new Error("Unknown expression type: " + e.type);
+    }
+  }
+
+  genAtom(e) {
+    // wrap in parens when needed for correct precedence as a call/index base
+    if (["Identifier", "MemberExpression", "IndexExpression", "CallExpression", "MethodCallExpression", "ParenExpression"].includes(e.type)) {
+      return this.genExpr(e);
+    }
+    return `(${this.genExpr(e)})`;
+  }
+}
+
+function mulberry32(seed) {
+  let a = seed || 12345;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+
+</script>
+<script>
+(function () {
+  "use strict";
+
+  // ---------- level presets (real config, drives the engine directly) ----------
+  const LEVEL_PRESETS = {
+    LOW:     { renameIdentifiers: true,  stringObfuscation: false, controlFlow: false, deadCode: false, minify: true,  removeComments: true,  constantTransform: false, vmProtection: false, watermark: true },
+    MEDIUM:  { renameIdentifiers: true,  stringObfuscation: true,  controlFlow: false, deadCode: false, minify: true,  removeComments: true,  constantTransform: true,  vmProtection: false, watermark: true },
+    HIGH:    { renameIdentifiers: true,  stringObfuscation: true,  controlFlow: true,  deadCode: false, minify: true,  removeComments: true,  constantTransform: true,  vmProtection: true,  watermark: true },
+    EXTREME: { renameIdentifiers: true,  stringObfuscation: true,  controlFlow: true,  deadCode: true,  minify: true,  removeComments: true,  constantTransform: true,  vmProtection: true,  watermark: true },
+  };
+
+  // Levels/options gated behind a membership (mirrors server.js — the server
+  // is still the real source of truth and re-checks this on every /api/spend,
+  // but gating it here too means people see the lock *before* wasting a run).
+  const MEMBERSHIP_ONLY_LEVELS = new Set(["HIGH", "EXTREME"]);
+  const MEMBERSHIP_ONLY_OPTIONS = new Set(["controlFlow", "deadCode", "vmProtection"]);
+
+  // Demo pricing shown before /api/plans answers (or when there's no backend
+  // at all) — kept in sync with server.js's MEMBERSHIP_PLANS/SINGLE_USE_PACKAGES.
+  let PLANS = {
+    memberships: {
+      starter: { label: "Starter", dailyTokens: 20, priceUSD: 4.99 },
+      pro:     { label: "Pro",     dailyTokens: 60, priceUSD: 9.99 },
+      studio:  { label: "Studio",  dailyTokens: 200, priceUSD: 19.99 },
+    },
+    singleUsePackages: { 10: 2.99, 30: 6.99, 100: 17.99 },
+  };
+
+  const RUNTIME_LABELS = {
+    lua51: "Lua 5.1", lua52: "Lua 5.2", lua53: "Lua 5.3", lua54: "Lua 5.4",
+    luajit: "LuaJIT", luau: "Roblox Luau",
+  };
+
+  const state = {
+    runtime: "luau",
+    level: "HIGH",
+    options: { ...LEVEL_PRESETS.HIGH },
+    processing: false,
+  };
+
+  const SAMPLE = `local Players = game:GetService("Players")
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoid = character:WaitForChild("Humanoid")
+
+local function applySpeedBoost(multiplier)
+    local baseSpeed = 16
+    humanoid.WalkSpeed = baseSpeed * multiplier
+end
+
+local Remote = game:GetService("ReplicatedStorage"):WaitForChild("BoostEvent")
+Remote.OnClientEvent:Connect(function(amount)
+    applySpeedBoost(amount)
+end)
+`;
+
+  // ---------------- accounts (real server-backed, with local fallback) ----------------
+  // If server/server.js is running and this page is served from it, /api/me
+  // will answer (200 logged in, or 401 logged out) and tokens become
+  // account-bound and tamper-resistant. If this file is opened standalone
+  // (e.g. via file://, or no backend running), the fetch simply fails and
+  // the obfuscator stays locked (see applyAccessState) — there is no
+  // anonymous local fallback balance anymore; accounts are required.
+  try { localStorage.removeItem("opaque_token_balance_v1"); } catch (e) { /* old version's key — no longer used */ }
+
+  function $(sel) { return document.querySelector(sel); }
+  function $all(sel) { return Array.from(document.querySelectorAll(sel)); }
+
+  let cmInput, cmOutput;
+
+  // Is the currently-selected level/options combination allowed without a
+  // membership? Mirrors server.js's RESTRICTED_LEVELS/RESTRICTED_OPTIONS —
+  // the server re-checks this independently at spend time regardless of
+  // what the UI allowed, so this is purely about not wasting the user's
+  // time on a run the server will reject.
+  function isMemberOnlyConfig(level, options) {
+    if (MEMBERSHIP_ONLY_LEVELS.has(level)) return true;
+    return Object.keys(options).some(k => options[k] && MEMBERSHIP_ONLY_OPTIONS.has(k));
+  }
+  function isMember() { return !!(auth.user && auth.user.membership); }
+
+  function applyAccessState() {
+    const grid = $("#tool-grid");
+    const unlocked = auth.mode === "server" && !!auth.user;
+    grid.classList.toggle("locked", !unlocked);
+    if (cmInput) cmInput.setOption("readOnly", !unlocked);
+    if (!unlocked) {
+      if (auth.mode === "server") {
+        $("#lock-title").textContent = "Log in to unlock the obfuscator";
+        $("#lock-desc").textContent = "Create a free account and get 5 one-time-use tokens, or log in if you already have one.";
+        $("#lock-cta").textContent = "Log in / Sign up";
+        $("#lock-cta").style.display = "";
+      } else {
+        $("#lock-title").textContent = "No account server detected";
+        $("#lock-desc").innerHTML = 'This page needs to be served by the account server to unlock the obfuscator. Run <code style="font-family:inherit">node server/server.js</code> and open this page from that server (e.g. http://localhost:3000) to create a free account with 5 tokens. See <code style="font-family:inherit">server/README.md</code> for setup.';
+        $("#lock-cta").style.display = "none";
+      }
+    }
+    renderFeatureGating();
+    renderTokenPill();
+  }
+  function wireLock() {
+    $("#lock-cta").addEventListener("click", () => {
+      if (auth.mode === "server") openAuthModal("register");
+    });
+  }
+
+  // Visually locks HIGH/EXTREME level tabs and the membership-only option
+  // toggles behind a membership badge; clicking a locked control opens the
+  // memberships tab of the buy modal instead of applying the change.
+  function renderFeatureGating() {
+    const member = isMember();
+    $all(".level-tabs button").forEach(btn => {
+      const restricted = MEMBERSHIP_ONLY_LEVELS.has(btn.dataset.level);
+      btn.classList.toggle("membership-locked", restricted && !member);
+    });
+    $all("[data-opt]").forEach(el => {
+      const key = el.dataset.opt;
+      const row = el.closest(".toggle-row");
+      const restricted = MEMBERSHIP_ONLY_OPTIONS.has(key);
+      if (row) row.classList.toggle("membership-locked", restricted && !member);
+    });
+  }
+
+  function renderTokenPill() {
+    const countEl = $("#token-count");
+    const badgeEl = $("#token-plan-badge");
+    if (!countEl) return;
+    if (isMember()) {
+      const m = auth.user.membership;
+      countEl.textContent = m.tokens;
+      badgeEl.textContent = m.label;
+      badgeEl.style.display = "";
+    } else {
+      countEl.textContent = auth.user ? auth.user.singleUseTokens : "–";
+      badgeEl.style.display = "none";
+    }
+  }
+  function bumpTokenPill() {
+    const el = $("#token-count");
+    el.classList.remove("bump"); void el.offsetWidth; el.classList.add("bump");
+  }
+
+  const auth = {
+    mode: "local", // 'local' | 'server'
+    user: null,    // { email, singleUseTokens, membership: {...} | null }
+    async init() {
+      try {
+        const res = await fetch("/api/me", { credentials: "include" });
+        if (res.status === 401) { this.mode = "server"; this.user = null; }
+        else if (res.ok) { this.mode = "server"; this.user = await res.json(); }
+        else { this.mode = "local"; }
+      } catch (e) {
+        this.mode = "local";
+      }
+      try {
+        const res = await fetch("/api/plans");
+        if (res.ok) PLANS = await res.json();
+      } catch (e) { /* keep the built-in defaults — fine for local mode */ }
+      this.renderHeader();
+      applyAccessState();
+      renderBuyModalContent();
+    },
+    renderHeader() {
+      const area = $("#account-area");
+      if (this.mode === "server" && this.user) {
+        area.innerHTML = `<div class="account-chip"><span class="email">${escapeHtml(this.user.email)}</span><button id="logout-btn">Log out</button></div>`;
+        $("#logout-btn").addEventListener("click", () => this.logout());
+      } else {
+        area.innerHTML = `<button class="btn btn-ghost btn-sm" id="login-open-btn">Log in</button>`;
+        // The header's generic "Log in" button always opens the Log in tab —
+        // only the token-pill (which implies "I want tokens") defaults to
+        // Register, since that's the tab that actually grants any.
+        $("#login-open-btn").addEventListener("click", () => openAuthModal("login"));
+      }
+    },
+    async logout() {
+      try { await fetch("/api/logout", { method: "POST", credentials: "include" }); } catch (e) { /* ignore */ }
+      this.user = null;
+      this.renderHeader();
+      applyAccessState();
+      showToast("Logged out");
+    },
+  };
+
+  function openAuthModal(tab) {
+    setAuthTab(tab || "login");
+    $("#backend-offline-banner").style.display = auth.mode === "local" ? "block" : "none";
+    $("#auth-modal").classList.add("show");
+    $("#auth-email").focus();
+  }
+  function closeAuthModal() {
+    $("#auth-modal").classList.remove("show");
+    $("#auth-error").textContent = "";
+    $("#auth-form").reset();
+  }
+  function setAuthTab(tab) {
+    $all(".auth-tab").forEach(t => t.classList.toggle("active", t.dataset.tab === tab));
+    const isRegister = tab === "register";
+    $("#auth-title").textContent = isRegister ? "Create account" : "Log in";
+    $("#auth-sub").textContent = isRegister
+      ? "New accounts start with 5 free one-time-use tokens."
+      : "Welcome back.";
+    $("#auth-submit").textContent = isRegister ? "Create account" : "Log in";
+    $("#auth-password").setAttribute("autocomplete", isRegister ? "new-password" : "current-password");
+    $("#auth-password-hint").style.display = isRegister ? "block" : "none";
+    $("#auth-form").dataset.mode = tab;
+    $("#auth-error").textContent = "";
+  }
+
+  async function submitAuthForm(e) {
+    e.preventDefault();
+    const mode = $("#auth-form").dataset.mode || "login";
+    const email = $("#auth-email").value.trim();
+    const password = $("#auth-password").value;
+    const errEl = $("#auth-error");
+    errEl.textContent = "";
+
+    if (auth.mode === "local") {
+      errEl.textContent = "No account server is running for this page — see the note above.";
+      return;
+    }
+
+    const btn = $("#auth-submit");
+    btn.disabled = true;
+    try {
+      const res = await fetch(`/api/${mode === "register" ? "register" : "login"}`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+      const data = await res.json();
+      if (!res.ok) { errEl.textContent = data.error || "Something went wrong."; return; }
+      auth.user = data;
+      auth.renderHeader();
+      applyAccessState();
+      closeAuthModal();
+      showToast(mode === "register" ? `Welcome! +${data.singleUseTokens} free tokens.` : "Logged in.");
+    } catch (err) {
+      errEl.textContent = "Could not reach the account server.";
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  function wireAuth() {
+    $("#login-open-btn")?.addEventListener("click", () => openAuthModal("login"));
+    $("#auth-close").addEventListener("click", closeAuthModal);
+    $("#auth-modal").addEventListener("click", (e) => { if (e.target.id === "auth-modal") closeAuthModal(); });
+    $all(".auth-tab").forEach(t => t.addEventListener("click", () => setAuthTab(t.dataset.tab)));
+    $("#auth-form").addEventListener("submit", submitAuthForm);
+  }
+
+  // Spend exactly 1 token for a run (server picks membership vs single-use,
+  // and re-validates the feature tier independently of what the UI allowed).
+  async function spendToken(meta) {
+    if (!(auth.mode === "server" && auth.user)) return { ok: false, error: "Not logged in." };
+    try {
+      const res = await fetch("/api/spend", {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(meta),
+      });
+      const data = await res.json();
+      if (!res.ok) return { ok: false, error: data.error, requiresMembership: !!data.requiresMembership };
+      auth.user = data;
+      renderTokenPill();
+      bumpTokenPill();
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: "Could not reach the account server." };
+    }
+  }
+
+  async function buySingleUsePack(tokens) {
+    try {
+      const res = await fetch("/api/topup", {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amount: tokens }),
+      });
+      const data = await res.json();
+      if (!res.ok) return false;
+      auth.user = data;
+      renderTokenPill(); bumpTokenPill(); renderFeatureGating();
+      return true;
+    } catch (e) { return false; }
+  }
+
+  async function subscribeToPlan(planKey) {
+    try {
+      const res = await fetch("/api/subscribe", {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plan: planKey }),
+      });
+      const data = await res.json();
+      if (!res.ok) return false;
+      auth.user = data;
+      renderTokenPill(); bumpTokenPill(); renderFeatureGating();
+      return true;
+    } catch (e) { return false; }
+  }
+
+  // ---------------- buy modal (single-use packs + memberships) ----------------
+  function openBuyModal(tab) {
+    renderBuyModalContent();
+    setBuyTab(tab || (isMember() ? "membership" : "single"));
+    $("#buy-modal").classList.add("show");
+  }
+  function closeBuyModal() { $("#buy-modal").classList.remove("show"); }
+  function setBuyTab(tab) {
+    $all(".buy-tab").forEach(t => t.classList.toggle("active", t.dataset.tab === tab));
+    $("#single-use-pane").style.display = tab === "single" ? "" : "none";
+    $("#membership-pane").style.display = tab === "membership" ? "" : "none";
+  }
+
+  function renderBuyModalContent() {
+    const singleWrap = $("#single-use-packages");
+    if (singleWrap) {
+      singleWrap.innerHTML = Object.entries(PLANS.singleUsePackages).map(([tokens, price]) => `
+        <button class="pkg-card" data-tokens="${tokens}">
+          <div class="amt">${tokens} <small>tokens</small></div>
+          <div class="price">$${Number(price).toFixed(2)}</div>
+          <div class="per">≈ ${(price / tokens * 100).toFixed(1)}¢ / token</div>
+        </button>`).join("");
+      $all("#single-use-packages .pkg-card").forEach(card => {
+        card.addEventListener("click", async () => {
+          const tokens = parseInt(card.dataset.tokens, 10);
+          const ok = await buySingleUsePack(tokens);
+          showToast(ok ? `Demo purchase: +${tokens} one-time tokens (no charge was made)` : "Could not complete the demo purchase.");
+          if (ok) closeBuyModal();
+        });
+      });
+    }
+    const memberWrap = $("#membership-plans");
+    if (memberWrap) {
+      const entries = Object.entries(PLANS.memberships);
+      memberWrap.innerHTML = entries.map(([key, plan], i) => `
+        <button class="pkg-card plan-card ${i === 1 ? "best" : ""}" data-plan="${key}">
+          <div class="amt">${plan.dailyTokens} <small>tokens / day</small></div>
+          <div class="price">$${Number(plan.priceUSD).toFixed(2)}<span class="per-mo">/mo</span></div>
+          <div class="per">${plan.label} — renews daily, all levels &amp; options unlocked</div>
+        </button>`).join("");
+      $all("#membership-plans .pkg-card").forEach(card => {
+        card.addEventListener("click", async () => {
+          const plan = card.dataset.plan;
+          const ok = await subscribeToPlan(plan);
+          showToast(ok ? `Demo subscription: ${PLANS.memberships[plan].label} active (no charge was made)` : "Could not complete the demo subscription.");
+          if (ok) closeBuyModal();
+        });
+      });
+    }
+  }
+
+  function wireWallet() {
+    $("#token-pill").addEventListener("click", () => {
+      if (auth.mode === "server" && auth.user) { openBuyModal(); return; }
+      if (auth.mode === "server") { openAuthModal("register"); return; }
+      showToast("Run the account server to get or buy tokens — see server/README.md");
+    });
+    $("#modal-close").addEventListener("click", closeBuyModal);
+    $("#buy-modal").addEventListener("click", (e) => { if (e.target.id === "buy-modal") closeBuyModal(); });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") { closeBuyModal(); closeAuthModal(); } });
+    $all(".buy-tab").forEach(t => t.addEventListener("click", () => setBuyTab(t.dataset.tab)));
+  }
+
+
+  function initEditors() {
+    cmInput = CodeMirror($("#editor-input"), {
+      value: "",
+      mode: "lua",
+      theme: "opaque",
+      lineNumbers: true,
+      indentUnit: 4,
+      tabSize: 4,
+      lineWrapping: false,
+      placeholder: "Paste your Lua/Luau code here to get started.",
+    });
+    cmOutput = CodeMirror($("#editor-output"), {
+      value: "",
+      mode: "lua",
+      theme: "opaque",
+      lineNumbers: true,
+      readOnly: true,
+      lineWrapping: false,
+    });
+    cmInput.on("change", () => {
+      updateInputStats();
+      clearError();
+    });
+    updateInputStats();
+  }
+
+  function loadSample() {
+    cmInput.setValue(SAMPLE);
+    cmInput.focus();
+  }
+
+  function bytesOf(str) { return new TextEncoder().encode(str).length; }
+  function linesOf(str) { return str.length ? str.split("\n").length : 0; }
+
+  function updateInputStats() {
+    const src = cmInput.getValue();
+    $("#input-stat").textContent = src.trim().length
+      ? `${linesOf(src)} lines · ${bytesOf(src)} B`
+      : "empty";
+  }
+
+  function setRuntime(rt) {
+    state.runtime = rt;
+    renderFeatureAvailability();
+  }
+
+  function setLevel(lv) {
+    if (MEMBERSHIP_ONLY_LEVELS.has(lv) && !isMember()) {
+      showToast(`${lv} requires a membership`);
+      openBuyModal("membership");
+      return;
+    }
+    state.level = lv;
+    state.options = { ...LEVEL_PRESETS[lv] };
+    renderConfigFromState();
+    $all(".level-tabs button").forEach(b => b.classList.toggle("active", b.dataset.level === lv));
+  }
+
+  // Which toggles make sense per runtime (informational gating only — the
+  // engine itself also silently no-ops unsupported combinations; this just
+  // keeps the UI honest about what's actually going to happen).
+  function featureNote(rt) {
+    if (rt === "luau") return "Luau syntax (types, if-expressions, continue, compound assignment) is parsed and preserved.";
+    if (rt === "lua51") return "'continue' and 'goto' aren't part of Lua 5.1; code using them will report a parse error.";
+    if (rt === "luajit") return "Parsed with standard Lua 5.1 grammar (LuaJIT's core syntax).";
+    return "Parsed with this runtime's grammar; unsupported constructs are reported as errors, not guessed at.";
+  }
+  function renderFeatureAvailability() {
+    $("#runtime-note").textContent = featureNote(state.runtime);
+  }
+
+  function renderConfigFromState() {
+    $all("[data-opt]").forEach(el => {
+      const key = el.dataset.opt;
+      el.checked = !!state.options[key];
+    });
+  }
+
+  function wireToggles() {
+    $all("[data-opt]").forEach(el => {
+      el.addEventListener("change", () => {
+        const key = el.dataset.opt;
+        if (MEMBERSHIP_ONLY_OPTIONS.has(key) && el.checked && !isMember()) {
+          el.checked = false;
+          showToast(`"${key}" requires a membership`);
+          openBuyModal("membership");
+          return;
+        }
+        state.options[key] = el.checked;
+        // VM protection only has an effect on strings that are already being
+        // obfuscated — if someone turns it on, string obfuscation needs to
+        // be on too, or the toggle would silently do nothing.
+        if (key === "vmProtection" && el.checked && !state.options.stringObfuscation) {
+          state.options.stringObfuscation = true;
+          const strEl = document.querySelector('[data-opt="stringObfuscation"]');
+          if (strEl) strEl.checked = true;
+        }
+        // Editing an individual toggle detaches from the named preset visually.
+        $all(".level-tabs button").forEach(b => b.classList.remove("active"));
+      });
+    });
+  }
+
+  function clearError() {
+    const box = $("#error-box");
+    box.classList.remove("show");
+    box.innerHTML = "";
+  }
+
+  function showError(title, detail) {
+    const box = $("#error-box");
+    box.classList.add("show");
+    box.innerHTML = `<div class="etitle">${escapeHtml(title)}</div><div class="eloc">${escapeHtml(detail)}</div>`;
+  }
+
+  function escapeHtml(s) {
+    return s.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  function showToast(msg) {
+    const t = $("#toast");
+    t.textContent = msg;
+    t.classList.add("show");
+    clearTimeout(showToast._h);
+    showToast._h = setTimeout(() => t.classList.remove("show"), 1600);
+  }
+
+  const LOADING_STEPS = ["Analyzing...", "Parsing...", "Applying transformations...", "Generating output...", "Validating..."];
+
+  async function runObfuscation() {
+    if (state.processing) return; // debounce: ignore rapid repeat clicks
+    const src = cmInput.getValue();
+    clearError();
+    cmOutput.setValue("");
+    $("#stats-row").style.visibility = "hidden";
+
+    if (!src.trim()) {
+      showError("Nothing to obfuscate", "Paste some Lua/Luau code into the input editor first.");
+      return;
+    }
+    const MAX_BYTES = 300 * 1024; // generous client-side sanity limit
+    if (bytesOf(src) > MAX_BYTES) {
+      showError("Input too large", `The input is larger than the ${Math.round(MAX_BYTES/1024)} KB limit for this tool.`);
+      return;
+    }
+
+    if (!(auth.mode === "server" && auth.user)) {
+      if (auth.mode === "server") {
+        showError("Log in to obfuscate", "Create a free account to get 5 free tokens, or log in if you already have one.");
+        openAuthModal("register");
+      } else {
+        showError("No account server detected", "Run the account server (see server/README.md) and open this page from it to log in and use the obfuscator.");
+      }
+      return;
+    }
+    if (isMemberOnlyConfig(state.level, state.options) && !isMember()) {
+      showError("Membership required", "This level/option combination is only available with a membership.");
+      openBuyModal("membership");
+      return;
+    }
+    const hasToken = isMember() ? auth.user.membership.tokens > 0 : auth.user.singleUseTokens > 0;
+    if (!hasToken) {
+      showError(
+        "Out of tokens",
+        isMember()
+          ? "You've used today's membership tokens — they renew in your next 24h cycle."
+          : "You're out of one-time-use tokens. Buy more, or get a membership for daily-renewing tokens and every feature."
+      );
+      openBuyModal();
+      return;
+    }
+
+    state.processing = true;
+    const btn = $("#obfuscate-btn");
+    btn.disabled = true;
+    btn.classList.add("loading");
+    const label = btn.querySelector(".btn-label");
+
+    try {
+      for (const step of LOADING_STEPS) {
+        label.textContent = step;
+        await nextFrame(60);
+      }
+
+      let ast, parser;
+      try {
+        parser = new Parser(src, state.runtime);
+        ast = parser.parseChunk();
+      } catch (e) {
+        renderParseError(e);
+        return;
+      }
+
+      const seed = cryptoSeed();
+      const gen = new CodeGenerator({
+        runtime: state.runtime,
+        level: state.level,
+        generatedAt: new Date(),
+        seed,
+        minify: !!state.options.minify,
+        renameIdentifiers: !!state.options.renameIdentifiers,
+        stringObfuscation: !!state.options.stringObfuscation,
+        removeComments: !!state.options.removeComments,
+        controlFlow: !!state.options.controlFlow,
+        deadCode: !!state.options.deadCode,
+        constantTransform: !!state.options.constantTransform,
+        vmProtection: !!state.options.vmProtection,
+        watermark: state.options.watermark !== false,
+      });
+
+      let out;
+      try {
+        out = gen.generate(ast, parser.comments);
+      } catch (e) {
+        showError("Obfuscation failed", e.message || String(e));
+        return;
+      }
+
+      // Output validation: the result MUST re-parse, or we refuse to hand it back.
+      try {
+        const p2 = new Parser(out, state.runtime);
+        p2.parseChunk();
+      } catch (e) {
+        console.error("[internal] obfuscated output failed to re-parse", e);
+        showError(
+          "Couldn't produce a valid result",
+          "The obfuscation pipeline produced output that failed its own validation, so nothing was returned. Try a lower obfuscation level, or simplify the input."
+        );
+        return;
+      }
+
+      label.textContent = "Complete.";
+      const spendResult = await spendToken({ runtime: state.runtime, level: state.level, options: state.options, inputBytes: bytesOf(src) });
+      if (!spendResult.ok) {
+        if (spendResult.requiresMembership) {
+          showError("Membership required", spendResult.error);
+          openBuyModal("membership");
+        } else {
+          showError("Couldn't use a token", spendResult.error || "Please try again.");
+        }
+        return;
+      }
+      cmOutput.setValue(out);
+      const outCard = $("#editor-output").closest(".editor-card");
+      outCard.classList.remove("reveal"); void outCard.offsetWidth; outCard.classList.add("reveal");
+      renderStats(src, out);
+    } finally {
+      state.processing = false;
+      btn.disabled = false;
+      btn.classList.remove("loading");
+      setTimeout(() => { label.textContent = "Obfuscate"; }, 400);
+    }
+  }
+
+  function cryptoSeed() {
+    const arr = new Uint32Array(1);
+    (window.crypto || window.msCrypto).getRandomValues(arr);
+    return arr[0];
+  }
+
+  function nextFrame(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+  function renderParseError(e) {
+    const line = e.line || "?";
+    const col = e.col || "?";
+    showError(
+      "Unable to parse the code",
+      `Line ${line}, column ${col}: ${e.message}`
+    );
+    if (typeof line === "number") {
+      cmInput.setCursor({ line: line - 1, ch: Math.max(0, (col || 1) - 1) });
+      cmInput.scrollIntoView({ line: line - 1, ch: 0 }, 100);
+    }
+  }
+
+  function renderStats(src, out) {
+    const origB = bytesOf(src), outB = bytesOf(out);
+    const origL = linesOf(src), outL = linesOf(out);
+    const delta = origB === 0 ? 0 : Math.round(((outB - origB) / origB) * 100);
+    $("#stats-row").style.visibility = "visible";
+    $("#stat-orig").textContent = `${(origB/1024).toFixed(2)} KB`;
+    $("#stat-out").textContent = `${(outB/1024).toFixed(2)} KB`;
+    const deltaEl = $("#stat-delta");
+    deltaEl.textContent = `${delta >= 0 ? "+" : ""}${delta}%`;
+    deltaEl.className = delta > 0 ? "delta-up" : "";
+    $("#stat-lines").textContent = `${origL} → ${outL}`;
+  }
+
+  function copyOutput() {
+    const val = cmOutput.getValue();
+    if (!val) return;
+    navigator.clipboard.writeText(val).then(() => showToast("Copied!")).catch(() => showToast("Couldn't copy — select and copy manually."));
+  }
+
+  function downloadOutput() {
+    const val = cmOutput.getValue();
+    if (!val) return;
+    const ext = state.runtime === "luau" ? "luau" : "lua";
+    const blob = new Blob([val], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `obfuscated.${ext}`;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function clearAll() {
+    const src = cmInput.getValue();
+    if (src.trim().length > 400) {
+      if (!confirm("Clear the input, output, and stats? This can't be undone.")) return;
+    }
+    cmInput.setValue("");
+    cmOutput.setValue("");
+    clearError();
+    $("#stats-row").style.visibility = "hidden";
+    updateInputStats();
+  }
+
+  function wireButtons() {
+    $("#obfuscate-btn").addEventListener("click", runObfuscation);
+    $("#copy-btn").addEventListener("click", copyOutput);
+    $("#download-btn").addEventListener("click", downloadOutput);
+    $("#clear-btn").addEventListener("click", clearAll);
+    $("#sample-btn").addEventListener("click", loadSample);
+    $("#runtime-select").addEventListener("change", (e) => setRuntime(e.target.value));
+    $all(".level-tabs button").forEach(b => b.addEventListener("click", () => setLevel(b.dataset.level)));
+  }
+
+  function wireNav() {
+    $all("[data-nav]").forEach(a => {
+      a.addEventListener("click", (ev) => {
+        const id = a.getAttribute("href");
+        if (id && id.startsWith("#")) {
+          const target = document.querySelector(id);
+          if (target) { ev.preventDefault(); target.scrollIntoView({ behavior: "smooth", block: "start" }); }
+        }
+      });
+    });
+  }
+
+  function wireRipples() {
+    document.addEventListener("click", (e) => {
+      const btn = e.target.closest(".btn");
+      if (!btn) return;
+      const rect = btn.getBoundingClientRect();
+      const size = Math.max(rect.width, rect.height) * 1.4;
+      const ripple = document.createElement("span");
+      ripple.className = "ripple";
+      ripple.style.width = ripple.style.height = size + "px";
+      ripple.style.left = (e.clientX - rect.left - size / 2) + "px";
+      ripple.style.top = (e.clientY - rect.top - size / 2) + "px";
+      btn.appendChild(ripple);
+      ripple.addEventListener("animationend", () => ripple.remove());
+    });
+  }
+
+  function wireScrollReveal() {
+    const items = $all("[data-reveal]");
+    if (!items.length) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      items.forEach(el => el.classList.add("in-view"));
+      return;
+    }
+    items.forEach((el, i) => { el.style.transitionDelay = (i % 3) * 0.07 + "s"; });
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add("in-view"); io.unobserve(e.target); } });
+    }, { threshold: 0.15 });
+    items.forEach(el => io.observe(el));
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+    initEditors();
+    setLevel("MEDIUM");
+    setRuntime("luau");
+    wireToggles();
+    wireButtons();
+    wireWallet();
+    wireAuth();
+    wireLock();
+    wireNav();
+    wireRipples();
+    wireScrollReveal();
+    renderFeatureAvailability();
+    updateInputStats();
+    auth.init();
+  });
+})();
+
+</script>
+</body>
+</html>
