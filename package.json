@@ -1,0 +1,12 @@
+{
+  "name": "opaque-lua-obfuscator",
+  "version": "1.0.0",
+  "description": "OPAQUE — a real, client-side Lua/Luau code obfuscator with a small accounts/credits backend.",
+  "private": true,
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "start": "node server/server.js"
+  }
+}
